@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.20)
 project(FlagTreeDebuggerRuntimeStandalone LANGUAGES CXX)
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/CANN.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/MUSA.cmake)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -23,6 +24,7 @@ add_library(FlagTreeDebuggerRuntimeStandalone STATIC
   TransferEngine.cpp
 )
 flagtree_debugger_enable_cann(FlagTreeDebuggerRuntimeStandalone)
+flagtree_debugger_enable_musa(FlagTreeDebuggerRuntimeStandalone)
 
 target_include_directories(FlagTreeDebuggerRuntimeStandalone
   PUBLIC
@@ -40,6 +42,7 @@ if(FLAGTREE_DEBUGGER_RUNTIME_BUILD_SMOKE_TEST)
       FlagTreeDebuggerRuntimeStandalone
   )
   flagtree_debugger_enable_cann(FlagTreeDebuggerRuntimeStandaloneSmokeTest)
+  flagtree_debugger_enable_musa(FlagTreeDebuggerRuntimeStandaloneSmokeTest)
 
   add_test(
     NAME FlagTreeDebuggerRuntimeStandaloneSmokeTest
@@ -56,6 +59,7 @@ if(FLAGTREE_DEBUGGER_RUNTIME_BUILD_TRACE_DEMO)
       FlagTreeDebuggerRuntimeStandalone
   )
   flagtree_debugger_enable_cann(FlagTreeDebuggerRuntimeTraceDemo)
+  flagtree_debugger_enable_musa(FlagTreeDebuggerRuntimeTraceDemo)
 endif()
 
 if(FLAGTREE_DEBUGGER_RUNTIME_BUILD_ASYNC_LOOP_TEST)
@@ -67,4 +71,5 @@ if(FLAGTREE_DEBUGGER_RUNTIME_BUILD_ASYNC_LOOP_TEST)
       FlagTreeDebuggerRuntimeStandalone
   )
   flagtree_debugger_enable_cann(FlagTreeDebuggerRuntimeAsyncLoopTest)
+  flagtree_debugger_enable_musa(FlagTreeDebuggerRuntimeAsyncLoopTest)
 endif()

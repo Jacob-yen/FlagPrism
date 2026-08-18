@@ -281,7 +281,8 @@ std::map<std::string, MetricValueType> makeVendorMetrics(
         static_cast<double>(event.endTimeNs) / 1000.0;
   }
   for (const auto &[name, value] : association.metrics) {
-    vendorMetrics["cann." + name] = value;
+    const bool isMthreadsMetric = name.rfind("mthreads.", 0) == 0;
+    vendorMetrics[(isMthreadsMetric ? "" : "cann.") + name] = value;
   }
   return vendorMetrics;
 }
@@ -776,9 +777,20 @@ std::unique_ptr<Session> SessionManager::makeSession(
     if (vendorAdapter->getName() == "cann") {
       isolateCannRuntimeOutputPath(vendorPlan, id);
     }
+    if (vendorAdapter->getName() == "mthreads" &&
+        !vendorPlan.enabledVendorMetrics.empty() &&
+        vendorPlan.requested.adapterOptions.count("mupti_import_path") == 0 &&
+        vendorPlan.requested.adapterOptions.count("mupti_output_path") == 0 &&
+        vendorPlan.requested.adapterOptions.count("output_path") == 0) {
+      // Native MUPTI launch capture is enabled for vendor-metric sessions by
+      // default. Keep the capture artifact beside the session artifacts so
+      // the importer can consume exactly the records produced by this run.
+      vendorPlan.requested.adapterOptions["mupti_output_path"] =
+          path + ".mupti.csv";
+    }
     if (toLower(dataName) != "tree") {
       vendorPlan.degradeReasons.push_back(
-          "backend=cann currently emits tree base data; requested data=" +
+          "vendor backend currently emits tree base data; requested data=" +
           dataName + " was ignored.");
     }
     auto *profiler = vendorAdapter->getRuntimeProfiler();

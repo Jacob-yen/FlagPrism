@@ -80,7 +80,9 @@ def _target_backend(metadata: dict) -> str:
 
 
 def _debug_launch_hidden_arg_enabled(metadata: dict) -> bool:
-    if _target_backend(metadata) not in {"ascend", "cann", "npu"}:
+    if _target_backend(metadata) not in {
+        "ascend", "cann", "npu", "musa", "mthreads"
+    }:
         return False
     # Keep the environment variable as a compatibility hook for subprocesses
     # and older scripts, but make the Python debugger API the normal path.
@@ -101,7 +103,7 @@ def _kernel_internal_timeline_supported() -> bool:
         backend = str(triton.runtime.driver.active.get_current_target().backend).lower()
     except Exception:
         return False
-    return backend in {"ascend", "npu", "cann"}
+    return backend in {"ascend", "npu", "cann", "musa", "mthreads"}
 
 
 def _finish_metadata_only_tensor_pointer_debug(fd, mod, metadata: dict) -> bool:

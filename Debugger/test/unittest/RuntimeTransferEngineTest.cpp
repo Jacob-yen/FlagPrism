@@ -22,7 +22,7 @@ TEST(TransferDriverSelectionTest, ResolvesBackendKindsToDriverKinds) {
   EXPECT_EQ(resolveTransferDriverKind(BackendKind::HIP),
             TransferDriverKind::HOST);
   EXPECT_EQ(resolveTransferDriverKind(BackendKind::MUSA),
-            TransferDriverKind::HOST);
+            TransferDriverKind::MUSA);
 }
 
 TEST(TransferDriverSelectionTest, BuildsTransferEngineOptionsFromBackendKind) {

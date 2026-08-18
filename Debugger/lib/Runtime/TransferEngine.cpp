@@ -5,6 +5,9 @@
 #include "acl/acl.h"
 #include "acl/acl_rt.h"
 #endif
+#if FLAGTREE_DEBUGGER_HAS_MUSA_RUNTIME
+#include "musa.h"
+#endif
 
 #include <algorithm>
 #include <cstdio>
@@ -29,6 +32,8 @@ const char *getDriverKindName(TransferDriverKind driverKind) {
     return "host";
   case TransferDriverKind::CANN:
     return "cann";
+  case TransferDriverKind::MUSA:
+    return "musa";
   }
   return "unknown";
 }
@@ -281,6 +286,188 @@ public:
   }
 };
 
+class MusaRuntimeBackendAdapter final : public RuntimeBackendAdapter {
+public:
+  TransferDriverKind driverKind() const override {
+    return TransferDriverKind::MUSA;
+  }
+
+  const char *name() const override { return "musa"; }
+
+  bool isAvailable() const override {
+#if FLAGTREE_DEBUGGER_HAS_MUSA_RUNTIME
+    return true;
+#else
+    return false;
+#endif
+  }
+
+  void ensureContext() const {
+#if FLAGTREE_DEBUGGER_HAS_MUSA_RUNTIME
+    checkMusa(muInit(0), "muInit");
+    MUcontext context = nullptr;
+    checkMusa(muCtxGetCurrent(&context), "muCtxGetCurrent");
+    if (!context) {
+      MUdevice device = 0;
+      checkMusa(muDeviceGet(&device, 0), "muDeviceGet");
+      checkMusa(muDevicePrimaryCtxRetain(&context, device),
+                "muDevicePrimaryCtxRetain");
+      checkMusa(muCtxSetCurrent(context), "muCtxSetCurrent");
+    }
+#endif
+  }
+
+  void *allocateDevice(size_t bytes) override {
+#if FLAGTREE_DEBUGGER_HAS_MUSA_RUNTIME
+    ensureContext();
+    MUdeviceptr ptr = 0;
+    checkMusa(muMemAlloc(&ptr, bytes), "muMemAlloc");
+    return reinterpret_cast<void *>(static_cast<uintptr_t>(ptr));
+#else
+    (void)bytes;
+    throwUnavailableBackend(*this);
+#endif
+  }
+
+  void freeDevice(void *ptr) override {
+#if FLAGTREE_DEBUGGER_HAS_MUSA_RUNTIME
+    if (ptr) {
+      checkMusa(muMemFree(reinterpret_cast<MUdeviceptr>(ptr)), "muMemFree");
+    }
+#else
+    (void)ptr;
+    throwUnavailableBackend(*this);
+#endif
+  }
+
+  void *allocateHost(size_t bytes) override {
+#if FLAGTREE_DEBUGGER_HAS_MUSA_RUNTIME
+    ensureContext();
+    void *ptr = nullptr;
+    checkMusa(muMemAllocHost(&ptr, bytes), "muMemAllocHost");
+    return ptr;
+#else
+    (void)bytes;
+    throwUnavailableBackend(*this);
+#endif
+  }
+
+  void freeHost(void *ptr) override {
+#if FLAGTREE_DEBUGGER_HAS_MUSA_RUNTIME
+    if (ptr) {
+      checkMusa(muMemFreeHost(ptr), "muMemFreeHost");
+    }
+#else
+    (void)ptr;
+    throwUnavailableBackend(*this);
+#endif
+  }
+
+  void memsetDevice(void *ptr, int value, size_t bytes,
+                    uint64_t streamHandle) override {
+#if FLAGTREE_DEBUGGER_HAS_MUSA_RUNTIME
+    if (!ptr || bytes == 0) {
+      return;
+    }
+    const auto devicePtr = reinterpret_cast<MUdeviceptr>(ptr);
+    if (streamHandle != 0) {
+      checkMusa(muMemsetD8Async(devicePtr, static_cast<unsigned char>(value),
+                                bytes, reinterpret_cast<MUstream>(streamHandle)),
+                "muMemsetD8Async");
+    } else {
+      checkMusa(muMemsetD8(devicePtr, static_cast<unsigned char>(value), bytes),
+                "muMemsetD8");
+    }
+#else
+    (void)ptr;
+    (void)value;
+    (void)bytes;
+    (void)streamHandle;
+    throwUnavailableBackend(*this);
+#endif
+  }
+
+  void copyHostToDevice(void *deviceDst, const void *hostSrc, size_t bytes,
+                        uint64_t streamHandle) override {
+#if FLAGTREE_DEBUGGER_HAS_MUSA_RUNTIME
+    if (!deviceDst || !hostSrc || bytes == 0) {
+      return;
+    }
+    const auto devicePtr = reinterpret_cast<MUdeviceptr>(deviceDst);
+    if (streamHandle != 0) {
+      checkMusa(muMemcpyHtoDAsync(devicePtr, hostSrc, bytes,
+                                  reinterpret_cast<MUstream>(streamHandle)),
+                "muMemcpyHtoDAsync");
+    } else {
+      checkMusa(muMemcpyHtoD(devicePtr, hostSrc, bytes), "muMemcpyHtoD");
+    }
+#else
+    (void)deviceDst;
+    (void)hostSrc;
+    (void)bytes;
+    (void)streamHandle;
+    throwUnavailableBackend(*this);
+#endif
+  }
+
+  void copyDeviceToHost(void *hostDst, const void *deviceSrc, size_t bytes,
+                        uint64_t streamHandle) override {
+#if FLAGTREE_DEBUGGER_HAS_MUSA_RUNTIME
+    if (!hostDst || !deviceSrc || bytes == 0) {
+      return;
+    }
+    const auto devicePtr = reinterpret_cast<MUdeviceptr>(deviceSrc);
+    if (streamHandle != 0) {
+      checkMusa(muMemcpyDtoHAsync(hostDst, devicePtr, bytes,
+                                  reinterpret_cast<MUstream>(streamHandle)),
+                "muMemcpyDtoHAsync");
+    } else {
+      checkMusa(muMemcpyDtoH(hostDst, devicePtr, bytes), "muMemcpyDtoH");
+    }
+#else
+    (void)hostDst;
+    (void)deviceSrc;
+    (void)bytes;
+    (void)streamHandle;
+    throwUnavailableBackend(*this);
+#endif
+  }
+
+  void synchronize(uint64_t streamHandle) override {
+#if FLAGTREE_DEBUGGER_HAS_MUSA_RUNTIME
+    if (streamHandle != 0) {
+      checkMusa(muStreamSynchronize(reinterpret_cast<MUstream>(streamHandle)),
+                "muStreamSynchronize");
+    } else {
+      checkMusa(muCtxSynchronize(), "muCtxSynchronize");
+    }
+#else
+    (void)streamHandle;
+    throwUnavailableBackend(*this);
+#endif
+  }
+
+private:
+#if FLAGTREE_DEBUGGER_HAS_MUSA_RUNTIME
+  [[noreturn]] static void throwMusaError(const char *call,
+                                           MUresult error) {
+    const char *name = nullptr;
+    const char *message = nullptr;
+    muGetErrorName(error, &name);
+    muGetErrorString(error, &message);
+    failRuntime(std::string(call) + " failed with " +
+                (name ? name : "MUSA error") + ": " +
+                (message ? message : "unknown error"));
+  }
+
+  static void checkMusa(MUresult error, const char *call) {
+    if (error != MUSA_SUCCESS) {
+      throwMusaError(call, error);
+    }
+  }
+#endif
+};
+
 struct BackendTransferAllocation {
   void *deviceBuffer = nullptr;
   void *hostBuffer = nullptr;
@@ -416,7 +603,9 @@ public:
     }
     const uint64_t streamHandle = resolveStreamHandle(ctx, options_);
     allocation->asyncCopySubmitted = false;
-    if (options_.driverKind == TransferDriverKind::CANN && streamHandle != 0) {
+    if ((options_.driverKind == TransferDriverKind::CANN ||
+         options_.driverKind == TransferDriverKind::MUSA) &&
+        streamHandle != 0) {
       adapter_->copyDeviceToHost(allocation->hostBuffer,
                                  allocation->deviceBuffer, allocation->bytes,
                                  streamHandle);
@@ -529,8 +718,9 @@ TransferDriverKind resolveTransferDriverKind(BackendKind backendKind) {
   case BackendKind::UNKNOWN:
   case BackendKind::CUDA:
   case BackendKind::HIP:
-  case BackendKind::MUSA:
     return TransferDriverKind::HOST;
+  case BackendKind::MUSA:
+    return TransferDriverKind::MUSA;
   }
   return TransferDriverKind::HOST;
 }
@@ -550,6 +740,8 @@ createRuntimeBackendAdapter(const TransferEngineOptions &options) {
     return std::make_unique<HostRuntimeBackendAdapter>();
   case TransferDriverKind::CANN:
     return std::make_unique<CannRuntimeBackendAdapter>();
+  case TransferDriverKind::MUSA:
+    return std::make_unique<MusaRuntimeBackendAdapter>();
   }
   failRuntime(std::string("unsupported transfer driver '") +
               getDriverKindName(options.driverKind) + "'");

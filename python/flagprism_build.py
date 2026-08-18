@@ -26,12 +26,16 @@ class FlagPrismBuildConfig:
     root: Path
 
     @classmethod
-    def from_environment(cls, project_root: Path) -> "FlagPrismBuildConfig":
-        relative_root = Path("third_party") / "FlagPrism"
+    def from_environment(
+        cls, project_root: Path, source_root: Path | None = None
+    ) -> "FlagPrismBuildConfig":
+        source_root = source_root or (project_root / "third_party" / "FlagPrism")
+        source_root = source_root.resolve()
+        relative_root = Path(os.path.relpath(source_root, project_root))
         return cls(
             enabled=_flagprism_enabled(),
             relative_root=relative_root,
-            root=project_root / relative_root,
+            root=source_root,
         )
 
     def validate_sources(self) -> None:
@@ -66,6 +70,7 @@ class FlagPrismBuildConfig:
             args.extend([
                 "-DFLAGPRISM_PYTHON_DIR=" + os.path.abspath(build_lib),
                 "-DPYTHON_EXTENSION_SUFFIX=" + (sysconfig.get_config_var("EXT_SUFFIX") or ".so"),
+                "-DFLAGPRISM_SOURCE_DIR=" + str(self.root),
             ])
         return args
 
@@ -155,7 +160,9 @@ class FlagPrismBuildConfig:
         ]
 
 
-def create_build_config(project_root: Path) -> FlagPrismBuildConfig:
-    config = FlagPrismBuildConfig.from_environment(project_root)
+def create_build_config(
+    project_root: Path, source_root: Path | None = None
+) -> FlagPrismBuildConfig:
+    config = FlagPrismBuildConfig.from_environment(project_root, source_root)
     config.validate_sources()
     return config

@@ -4,7 +4,47 @@ from enum import Enum
 
 from .native import compiler_binding
 
-triton_proton = compiler_binding()
+try:
+    triton_proton = compiler_binding()
+except RuntimeError:
+    # MThreads uses the launch-hook/vendor profiler path and deliberately does
+    # not build the CUDA/HIP-specific Proton lowering plugin.
+    from enum import IntEnum
+
+    class _MetricType(IntEnum):
+        CYCLE = 0
+
+    class _BufferStrategy(IntEnum):
+        CIRCULAR = 0
+        FLUSH = 1
+
+    class _BufferType(IntEnum):
+        SHARED = 0
+        GLOBAL = 1
+
+    class _SamplingStrategy(IntEnum):
+        NONE = 0
+        SELECTIVE = 1
+
+    class _Granularity(IntEnum):
+        CTA = 0
+        WARP = 1
+        WARP_2 = 2
+        WARP_4 = 3
+        WARP_8 = 4
+        WARP_GROUP = 5
+        WARP_GROUP_2 = 6
+        WARP_GROUP_4 = 7
+        WARP_GROUP_8 = 8
+
+    class _FallbackProton:
+        METRIC_TYPE = _MetricType
+        BUFFER_STRATEGY = _BufferStrategy
+        BUFFER_TYPE = _BufferType
+        SAMPLING_STRATEGY = _SamplingStrategy
+        GRANULARITY = _Granularity
+
+    triton_proton = _FallbackProton()
 
 metric_types = {"cycle": triton_proton.METRIC_TYPE.CYCLE}
 

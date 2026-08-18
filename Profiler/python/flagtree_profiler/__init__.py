@@ -47,6 +47,11 @@ class _ProfilerComponent:
     def load_dialects(context) -> None:
         from .native import compiler_binding
 
-        compiler_binding().load_dialects(context)
+        try:
+            compiler_binding().load_dialects(context)
+        except RuntimeError:
+            # The MThreads vendor path is launch-hook based and does not use
+            # the CUDA/HIP-specific Proton lowering dialect.
+            return
 
 component = register_component("profiler", _ProfilerComponent())

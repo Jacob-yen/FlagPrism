@@ -1039,14 +1039,21 @@ def launch_context(
             )
         yield hidden_args
         if has_hidden_arg:
-            if backend not in {"ascend", "cann", "npu"}:
+            if backend not in {
+                "ascend", "cann", "npu", "musa", "mthreads"
+            }:
                 raise RuntimeError(
                     f"FlagPrism has no hidden-argument synchronization adapter "
                     f"for backend {backend!r}"
                 )
-            import torch_npu
+            if backend in {"musa", "mthreads"}:
+                import torch
 
-            torch_npu.npu.synchronize()
+                torch.musa.synchronize()
+            else:
+                import torch_npu
+
+                torch_npu.npu.synchronize()
     except BaseException as error:
         launch_error = error
         raise

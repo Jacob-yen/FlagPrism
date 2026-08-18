@@ -2049,28 +2049,93 @@ Value fallbackPointerAddressForMemoryEvent(OpBuilder &builder, Location loc,
                                             slice->base);
 }
 
-Value extractLaneValue(OpBuilder &builder, Location loc, Value value,
-                       int64_t lane) {
-  Value flat = flattenTensorForSummary(builder, loc, value);
-  if (!flat)
+// Address summaries only need the first logical element of a contiguous
+// offset expression.  Materializing a tensor.extract here is attractive, but
+// it leaves an encoded Triton tensor live across the TTIR -> TTGIR
+// conversion.  CANN's and MThreads' lowerings both reject that combination
+// for the address-instrumentation path.  Walk the scalar expression instead
+// and keep the result scalar throughout.
+Value firstLaneIntegerValueToI64(OpBuilder &builder, Location loc, Value value,
+                                 int32_t depth = 0) {
+  if (!value || depth >= kMaxPointerTraceDepth ||
+      !isIntegerValueType(value.getType()))
     return {};
-  if (!isa<RankedTensorType>(flat.getType()))
-    return flat;
-  Value index = builder.create<arith::ConstantIndexOp>(loc, lane);
-  return builder.create<tensor::ExtractOp>(loc, flat, ValueRange{index});
-}
 
-Value combineOffsetsToI64(OpBuilder &builder, Location loc, Type targetType,
-                          ArrayRef<Value> offsets) {
-  Value combined = createIntegerConstantLike(builder, loc, targetType, 0);
-  for (Value offset : offsets) {
-    Value offsetI64 =
-        castIntegerValueToI64Like(builder, loc, offset, targetType);
-    if (!offsetI64)
+  if (!isa<RankedTensorType>(value.getType())) {
+    auto intType = dyn_cast<IntegerType>(getElementType(value.getType()));
+    if (!intType)
       return {};
-    combined = builder.create<arith::AddIOp>(loc, combined, offsetI64);
+    unsigned width = intType.getWidth();
+    if (width < 64)
+      return builder.create<arith::ExtSIOp>(loc, builder.getI64Type(), value);
+    if (width > 64)
+      return builder.create<arith::TruncIOp>(loc, builder.getI64Type(), value);
+    return value;
   }
-  return combined;
+
+  int64_t constant = 0;
+  if (isIntegerConstantSplat(value, constant))
+    return createI64Constant(builder, loc, static_cast<uint64_t>(constant));
+
+  Operation *def = value.getDefiningOp();
+  if (!def)
+    return {};
+
+  if (auto range = dyn_cast<triton::MakeRangeOp>(def))
+    return createI64Constant(builder, loc,
+                             static_cast<uint64_t>(range.getStart()));
+
+  if (auto splat = dyn_cast<triton::SplatOp>(def))
+    return firstLaneIntegerValueToI64(builder, loc, splat.getSrc(), depth + 1);
+
+  if (auto add = dyn_cast<arith::AddIOp>(def)) {
+    Value lhs =
+        firstLaneIntegerValueToI64(builder, loc, add.getLhs(), depth + 1);
+    Value rhs =
+        firstLaneIntegerValueToI64(builder, loc, add.getRhs(), depth + 1);
+    if (!lhs || !rhs)
+      return {};
+    return builder.create<arith::AddIOp>(loc, lhs, rhs);
+  }
+
+  if (auto sub = dyn_cast<arith::SubIOp>(def)) {
+    Value lhs =
+        firstLaneIntegerValueToI64(builder, loc, sub.getLhs(), depth + 1);
+    Value rhs =
+        firstLaneIntegerValueToI64(builder, loc, sub.getRhs(), depth + 1);
+    if (!lhs || !rhs)
+      return {};
+    return builder.create<arith::SubIOp>(loc, lhs, rhs);
+  }
+
+  if (auto mul = dyn_cast<arith::MulIOp>(def)) {
+    Value lhs =
+        firstLaneIntegerValueToI64(builder, loc, mul.getLhs(), depth + 1);
+    Value rhs =
+        firstLaneIntegerValueToI64(builder, loc, mul.getRhs(), depth + 1);
+    if (!lhs || !rhs)
+      return {};
+    return builder.create<arith::MulIOp>(loc, lhs, rhs);
+  }
+
+  if (auto ext = dyn_cast<arith::ExtSIOp>(def))
+    return firstLaneIntegerValueToI64(builder, loc, ext.getIn(), depth + 1);
+  if (auto ext = dyn_cast<arith::ExtUIOp>(def))
+    return firstLaneIntegerValueToI64(builder, loc, ext.getIn(), depth + 1);
+  if (auto trunc = dyn_cast<arith::TruncIOp>(def))
+    return firstLaneIntegerValueToI64(builder, loc, trunc.getIn(), depth + 1);
+  if (auto bitcast = dyn_cast<triton::BitcastOp>(def))
+    return firstLaneIntegerValueToI64(builder, loc, bitcast.getSrc(),
+                                      depth + 1);
+
+  StringRef name = def->getName().getStringRef();
+  if ((name == "tt.reshape" || name == "tt.broadcast" ||
+       name == "tt.expand_dims") &&
+      def->getNumOperands() == 1)
+    return firstLaneIntegerValueToI64(builder, loc, def->getOperand(0),
+                                      depth + 1);
+
+  return {};
 }
 
 Value activeLaneCountForSummary(OpBuilder &builder, Location loc,
@@ -2122,22 +2187,19 @@ buildFastAddressSummaryValues(OpBuilder &builder, Location loc,
     bytes = static_cast<uint32_t>(std::max<int64_t>(1, attr.getInt()));
 
   int64_t laneCount = 1;
-  Type offsetType = builder.getI64Type();
   if (auto ranked = dyn_cast<RankedTensorType>(observed.getType())) {
     laneCount = static_cast<int64_t>(getStaticElementCount(ranked));
     if (laneCount <= 0)
       return std::nullopt;
-    offsetType = RankedTensorType::get({laneCount}, builder.getI64Type(),
-                                       ranked.getEncoding());
   }
 
-  Value combinedOffset =
-      combineOffsetsToI64(builder, loc, offsetType, slice->offsets);
-  if (!combinedOffset)
-    return std::nullopt;
-  Value firstOffset = extractLaneValue(builder, loc, combinedOffset, 0);
-  if (!firstOffset)
-    return std::nullopt;
+  Value firstOffset = createI64Constant(builder, loc, 0);
+  for (Value offset : slice->offsets) {
+    Value firstLane = firstLaneIntegerValueToI64(builder, loc, offset);
+    if (!firstLane)
+      return std::nullopt;
+    firstOffset = builder.create<arith::AddIOp>(loc, firstOffset, firstLane);
+  }
 
   Value activeCount =
       activeLaneCountForSummary(builder, loc, recordOp, laneCount);
@@ -2384,8 +2446,11 @@ Value bitcastPayloadValueToI64(OpBuilder &builder, Location loc, Value value) {
   if (value.getType() == i64Like)
     return value;
   auto floatType = dyn_cast<FloatType>(getElementType(value.getType()));
-  if (floatType && floatType.getWidth() == 64)
+  if (floatType && floatType.getWidth() == 64) {
+    if (isa<RankedTensorType>(value.getType()))
+      return builder.create<triton::BitcastOp>(loc, i64Like, value);
     return builder.create<arith::BitcastOp>(loc, i64Like, value);
+  }
   return {};
 }
 
@@ -2444,7 +2509,10 @@ void emitFullDumpPayloadStores(OpBuilder &builder, Location loc,
     Value wordValue = value;
     if (isa<FloatType>(getElementType(value.getType()))) {
       Type i32Like = withElementType(value.getType(), builder.getI32Type());
-      wordValue = builder.create<arith::BitcastOp>(loc, i32Like, value);
+      if (isa<RankedTensorType>(value.getType()))
+        wordValue = builder.create<triton::BitcastOp>(loc, i32Like, value);
+      else
+        wordValue = builder.create<arith::BitcastOp>(loc, i32Like, value);
     }
     Value offsets =
         payloadLaneOffsets(builder, loc, value.getType(), payloadWordOffset, 1);

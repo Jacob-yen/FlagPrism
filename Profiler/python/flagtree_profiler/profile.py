@@ -29,6 +29,10 @@ def _is_cann_backend(backend: Optional[str]) -> bool:
     return str(backend or "").lower() in {"cann", "ascend", "npu"}
 
 
+def _is_mthreads_backend(backend: Optional[str]) -> bool:
+    return str(backend or "").lower() in {"mthreads", "musa"}
+
+
 def _uses_default_ir_triton_hook(backend: Optional[str], hook: Optional[str]) -> bool:
     return (
         hook == "triton"
@@ -929,6 +933,8 @@ def _select_backend() -> str:
         return "roctracer"
     elif backend in {"ascend", "npu"}:
         return "cann"
+    elif backend == "musa":
+        return "mthreads"
     else:
         raise ValueError("No backend is available for the current target.")
 
@@ -989,7 +995,7 @@ def start(
         name (str, optional): The name (with path) of the profiling session.
                               If not provided, the default name is "~/profiler.hatchet".
         backend (str, optional): The backend to use for profiling.
-                     Available options are [None, "cupti", "cupti_pcsampling", "roctracer", "cann"].
+        Available options are [None, "cupti", "cupti_pcsampling", "roctracer", "cann", "mthreads"].
                                  Defaults to None, which automatically selects the backend matching the current active runtime.
         context (str, optional): The context to use for profiling.
                                  Available options are ["shadow", "python"].
@@ -1019,8 +1025,8 @@ def start(
     _check_env(backend)
 
     use_triton_hook = hook == "triton" or (
-        hook == "instrumentation" and _is_cann_backend(backend)
-    )
+        _is_mthreads_backend(backend) and hook is None
+    ) or (hook == "instrumentation" and _is_cann_backend(backend))
     ir_default_for_triton = _uses_default_ir_triton_hook(backend, hook)
     use_instrumentation_hook = (
         _is_cann_backend(backend)
