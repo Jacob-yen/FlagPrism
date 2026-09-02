@@ -1,5 +1,6 @@
 import importlib
 import json
+import subprocess
 from types import SimpleNamespace
 
 from flagtree.profiler import tianshu
@@ -75,6 +76,48 @@ def test_ixkn_basename_resolves_sibling_csv(tmp_path):
     assert "tianshu.occupancy" in artifact["enabled_metrics"]
     assert all("No Tianshu ixKN profiling associations" not in reason
                for reason in artifact["degrade_reasons"])
+
+
+# FlagPrism: Verify that the 5.0-style profile is found from the 4.4 path.
+def test_ixkn_rep_profile_is_found_from_ixkn_path(tmp_path):
+    requested = tmp_path / "vector_add.ixkn"
+    actual = tmp_path / "vector_add.ixkn-rep"
+    actual.write_bytes(b"ixkn profile")
+
+    assert tianshu._find_ixkn_profile(requested) == actual
+
+
+# FlagPrism: Verify that import uses the profile path actually emitted by ixKN.
+def test_ixkn_import_uses_actual_rep_profile(monkeypatch, tmp_path):
+    requested = tmp_path / "vector_add.ixkn"
+    actual = tmp_path / "vector_add.ixkn-rep"
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        if len(calls) == 1:
+            actual.write_bytes(b"ixkn profile")
+            return subprocess.CompletedProcess(command, 0, "", "")
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            '"Kernel ID",Kernel Name\n1,vector_add\n',
+            "",
+        )
+
+    monkeypatch.setattr(tianshu,
+                        "find_ixkn_cli",
+                        lambda explicit=None: "/opt/ixkn-cli")
+    monkeypatch.setattr(tianshu.subprocess, "run", fake_run)
+
+    result = tianshu.run_ixkn_profile(
+        ["python3", "workload.py"],
+        export_profile=str(requested),
+    )
+
+    assert result.returncode == 0
+    assert calls[1][calls[1].index("--import-profile") + 1] == str(actual)
+    assert (tmp_path / "vector_add.csv").exists()
 
 
 def test_ixkn_csv_uses_shared_runtime_schema_aliases(tmp_path):
