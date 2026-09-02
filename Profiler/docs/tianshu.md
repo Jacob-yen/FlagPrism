@@ -70,6 +70,9 @@ instruction
 memory
 ```
 
-An `.ixkn` binary is retained as a raw input, but structured association needs
-the `--csv` output. Missing or unmatched correlations are recorded in
-`degrade_reasons` or with `state="unmatched"` rather than inferred silently.
+Depending on the CoreX SDK version, ixKN may retain the exported binary as
+either `.ixkn` or `.ixkn-rep`. The wrapper detects the file actually produced
+and uses that path for a later `--import-profile` operation. Structured
+association still needs the `--csv` output. Missing or unmatched correlations
+are recorded in `degrade_reasons` or with `state="unmatched"` rather than
+inferred silently.

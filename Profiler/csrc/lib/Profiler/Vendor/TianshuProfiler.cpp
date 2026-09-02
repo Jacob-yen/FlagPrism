@@ -143,8 +143,40 @@ bool looksLikeCsv(const std::filesystem::path &path) {
   return toLower(path.extension().string()) == ".csv";
 }
 
+bool endsWith(const std::string &value, const std::string &suffix) {
+  return value.size() >= suffix.size() &&
+         value.compare(value.size() - suffix.size(), suffix.size(), suffix) ==
+             0;
+}
+
 bool looksLikeIxkn(const std::filesystem::path &path) {
-  return toLower(path.extension().string()) == ".ixkn";
+  auto name = toLower(path.filename().string());
+  return endsWith(name, ".ixkn") || endsWith(name, ".ixkn-rep");
+}
+
+std::vector<std::filesystem::path>
+ixknProfileCandidates(const std::filesystem::path &root) {
+  std::vector<std::filesystem::path> candidates{root};
+  std::error_code ec;
+  auto exists = std::filesystem::exists(root, ec);
+  if (exists && std::filesystem::is_directory(root, ec)) {
+    return candidates;
+  }
+
+  auto name = root.filename().string();
+  auto lowerName = toLower(name);
+  if (endsWith(lowerName, ".ixkn-rep")) {
+    candidates.emplace_back(root.parent_path() /
+                            name.substr(0, name.size() - 4));
+  } else if (endsWith(lowerName, ".ixkn")) {
+    if (!exists) {
+      candidates.emplace_back(root.string() + "-rep");
+    }
+  } else if (!exists) {
+    candidates.emplace_back(root.string() + ".ixkn");
+    candidates.emplace_back(root.string() + ".ixkn-rep");
+  }
+  return candidates;
 }
 
 std::vector<std::filesystem::path>
@@ -172,28 +204,31 @@ collectIxknFiles(const SessionProfileMetadata &metadata) {
     }
   };
   for (const auto &root : roots) {
-    std::error_code ec;
-    if (!std::filesystem::exists(root, ec)) {
-      continue;
-    }
-    if (std::filesystem::is_regular_file(root, ec)) {
-      if (looksLikeCsv(root) || looksLikeIxkn(root)) {
-        add(root);
+    for (const auto &candidate : ixknProfileCandidates(root)) {
+      std::error_code ec;
+      if (!std::filesystem::exists(candidate, ec)) {
+        continue;
       }
-      continue;
-    }
-    std::filesystem::recursive_directory_iterator it(
-        root, std::filesystem::directory_options::skip_permission_denied, ec);
-    const std::filesystem::recursive_directory_iterator end;
-    while (it != end) {
-      std::error_code entryEc;
-      if (it->is_regular_file(entryEc) && !entryEc &&
-          (looksLikeCsv(it->path()) || looksLikeIxkn(it->path()))) {
-        add(it->path());
+      if (std::filesystem::is_regular_file(candidate, ec)) {
+        if (looksLikeCsv(candidate) || looksLikeIxkn(candidate)) {
+          add(candidate);
+        }
+        continue;
       }
-      it.increment(ec);
-      if (ec) {
-        ec.clear();
+      std::filesystem::recursive_directory_iterator it(
+          candidate, std::filesystem::directory_options::skip_permission_denied,
+          ec);
+      const std::filesystem::recursive_directory_iterator end;
+      while (it != end) {
+        std::error_code entryEc;
+        if (it->is_regular_file(entryEc) && !entryEc &&
+            (looksLikeCsv(it->path()) || looksLikeIxkn(it->path()))) {
+          add(it->path());
+        }
+        it.increment(ec);
+        if (ec) {
+          ec.clear();
+        }
       }
     }
   }
@@ -505,8 +540,8 @@ TianshuProfiler::importIxknOutput(const SessionProfileMetadata &metadata,
 
   if (files.empty() && !plan.enabledVendorMetrics.empty()) {
     artifact.degradeReasons.push_back(
-        "No ixKN CSV or .ixkn export was found. Use ixkn-cli --export-profile "
-        "<path> --csv and set ixkn_import_path for import.");
+        "No ixKN CSV, .ixkn, or .ixkn-rep export was found. Use ixkn-cli "
+        "--export-profile <path> --csv and set ixkn_import_path for import.");
   }
   return artifact;
 }

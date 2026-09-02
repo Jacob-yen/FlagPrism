@@ -104,6 +104,9 @@ def run_ixkn_profile(
 
     # ixKN 4.4 emits CSV rows on stdout. Capture that stream so the result can
     # be consumed by the vendor importer instead of being lost in the console.
+    previous_profile_state = None
+    if export_profile:
+        previous_profile_state = _ixkn_profile_state(Path(export_profile))
     result = subprocess.run(
         command,
         check=False,
@@ -135,9 +138,17 @@ def run_ixkn_profile(
     # With --export-profile ixKN writes only its binary database during the
     # live run. Re-open that database to obtain the structured CSV report.
     if export_profile and result.returncode == 0 and header_index is None:
+        resolved_profile = _find_ixkn_profile(
+            Path(export_profile), previous_state=previous_profile_state)
+        if resolved_profile is None:
+            sys.stderr.write(
+                "ixKN export completed without a fresh .ixkn or .ixkn-rep "
+                f"profile for {export_profile}\n")
+            result.returncode = 1
+            return result
         import_command = [
             find_ixkn_cli(ixkn_cli), "--import-profile",
-            str(export_profile)
+            str(resolved_profile)
         ]
         if sections:
             import_command.extend(["--section", str(sections)])
@@ -162,6 +173,8 @@ def run_ixkn_profile(
             )
         if imported.stderr:
             sys.stderr.write(imported.stderr)
+        if imported.returncode != 0:
+            result.returncode = imported.returncode
     return result
 
 
@@ -218,17 +231,61 @@ def _find_csv_files(root: Path) -> list[Path]:
     return [path for path in dict.fromkeys(candidates) if path.is_file()]
 
 
-def _find_ixkn_profile(root: Path) -> Path | None:
+def _ixkn_profile_candidates(root: Path) -> list[Path]:
     root = root.expanduser()
-    if root.is_file() and root.suffix.lower() == ".ixkn":
-        return root
     if root.is_dir():
+        return [root]
+
+    candidates = [root]
+    name = root.name.lower()
+    if name.endswith(".ixkn-rep"):
+        candidates.append(root.with_name(root.name[:-4]))
+    elif name.endswith(".ixkn"):
+        candidates.append(root.with_name(root.name + "-rep"))
+    else:
+        candidates.extend(
+            [root.with_suffix(".ixkn"), root.with_suffix(".ixkn-rep")])
+    return list(dict.fromkeys(candidates))
+
+
+def _is_ixkn_profile(path: Path) -> bool:
+    name = path.name.lower()
+    return name.endswith(".ixkn") or name.endswith(".ixkn-rep")
+
+
+def _ixkn_profile_state(root: Path) -> dict[Path, tuple[int, int]]:
+    state = {}
+    for path in _ixkn_profile_candidates(root):
+        if not path.is_file() or not _is_ixkn_profile(path):
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        state[path] = (stat.st_mtime_ns, stat.st_size)
+    return state
+
+
+def _find_ixkn_profile(root: Path,
+                       previous_state: dict[Path, tuple[int, int]]
+                       | None = None) -> Path | None:
+    root = root.expanduser()
+    matches = []
+    for path in _ixkn_profile_candidates(root):
+        if not path.is_file() or not _is_ixkn_profile(path):
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        current_state = (stat.st_mtime_ns, stat.st_size)
+        if (previous_state is not None and
+                previous_state.get(path) == current_state):
+            continue
+        matches.append((stat.st_mtime_ns, path))
+    if not matches:
         return None
-    candidates = [root.with_suffix(".ixkn")]
-    if root.suffix.lower() == ".ixkn":
-        candidates.insert(0, root)
-    return next((path for path in dict.fromkeys(candidates) if path.is_file()),
-                None)
+    return max(matches, key=lambda item: item[0])[1]
 
 
 def _parse_csv(path: Path) -> list[dict]:
