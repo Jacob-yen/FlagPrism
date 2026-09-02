@@ -248,7 +248,8 @@ def _ixkn_profile_candidates(root: Path) -> list[Path]:
         candidates.append(root.with_name(root.name + "-rep"))
     else:
         candidates.extend(
-            [root.with_suffix(".ixkn"), root.with_suffix(".ixkn-rep")])
+            [root.with_suffix(".ixkn"),
+             root.with_suffix(".ixkn-rep")])
     return list(dict.fromkeys(candidates))
 
 
@@ -272,9 +273,10 @@ def _ixkn_profile_state(root: Path) -> dict[Path, tuple[int, int]]:
     return state
 
 
-def _find_ixkn_profile(root: Path,
-                       previous_state: dict[Path, tuple[int, int]]
-                       | None = None) -> Path | None:
+def _find_ixkn_profile(
+        root: Path,
+        previous_state: dict[Path, tuple[int, int]]
+    | None = None) -> Path | None:
     # FlagPrism: Select the newest newly-created or updated profile candidate.
     root = root.expanduser()
     matches = []
@@ -286,8 +288,8 @@ def _find_ixkn_profile(root: Path,
         except OSError:
             continue
         current_state = (stat.st_mtime_ns, stat.st_size)
-        if (previous_state is not None and
-                previous_state.get(path) == current_state):
+        if (previous_state is not None
+                and previous_state.get(path) == current_state):
             continue
         matches.append((stat.st_mtime_ns, path))
     if not matches:

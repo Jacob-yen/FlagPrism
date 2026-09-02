@@ -105,7 +105,8 @@ def test_ixkn_import_uses_actual_rep_profile(monkeypatch, tmp_path):
             "",
         )
 
-    monkeypatch.setattr(tianshu, "find_ixkn_cli",
+    monkeypatch.setattr(tianshu,
+                        "find_ixkn_cli",
                         lambda explicit=None: "/opt/ixkn-cli")
     monkeypatch.setattr(tianshu.subprocess, "run", fake_run)
 
