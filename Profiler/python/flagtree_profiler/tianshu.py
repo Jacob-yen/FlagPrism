@@ -104,6 +104,7 @@ def run_ixkn_profile(
 
     # ixKN 4.4 emits CSV rows on stdout. Capture that stream so the result can
     # be consumed by the vendor importer instead of being lost in the console.
+    # FlagPrism: Snapshot profile candidates to avoid reusing stale exports.
     previous_profile_state = None
     if export_profile:
         previous_profile_state = _ixkn_profile_state(Path(export_profile))
@@ -138,6 +139,7 @@ def run_ixkn_profile(
     # With --export-profile ixKN writes only its binary database during the
     # live run. Re-open that database to obtain the structured CSV report.
     if export_profile and result.returncode == 0 and header_index is None:
+        # FlagPrism: Import the profile path emitted by the active CoreX SDK.
         resolved_profile = _find_ixkn_profile(
             Path(export_profile), previous_state=previous_profile_state)
         if resolved_profile is None:
@@ -173,6 +175,7 @@ def run_ixkn_profile(
             )
         if imported.stderr:
             sys.stderr.write(imported.stderr)
+        # FlagPrism: Propagate failures from the post-run import step.
         if imported.returncode != 0:
             result.returncode = imported.returncode
     return result
@@ -232,6 +235,7 @@ def _find_csv_files(root: Path) -> list[Path]:
 
 
 def _ixkn_profile_candidates(root: Path) -> list[Path]:
+    # FlagPrism: Resolve profile names used by different CoreX SDK versions.
     root = root.expanduser()
     if root.is_dir():
         return [root]
@@ -249,11 +253,13 @@ def _ixkn_profile_candidates(root: Path) -> list[Path]:
 
 
 def _is_ixkn_profile(path: Path) -> bool:
+    # FlagPrism: Recognize both current ixKN binary profile suffixes.
     name = path.name.lower()
     return name.endswith(".ixkn") or name.endswith(".ixkn-rep")
 
 
 def _ixkn_profile_state(root: Path) -> dict[Path, tuple[int, int]]:
+    # FlagPrism: Record files before export so unchanged profiles are ignored.
     state = {}
     for path in _ixkn_profile_candidates(root):
         if not path.is_file() or not _is_ixkn_profile(path):
@@ -269,6 +275,7 @@ def _ixkn_profile_state(root: Path) -> dict[Path, tuple[int, int]]:
 def _find_ixkn_profile(root: Path,
                        previous_state: dict[Path, tuple[int, int]]
                        | None = None) -> Path | None:
+    # FlagPrism: Select the newest newly-created or updated profile candidate.
     root = root.expanduser()
     matches = []
     for path in _ixkn_profile_candidates(root):

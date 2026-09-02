@@ -143,6 +143,7 @@ bool looksLikeCsv(const std::filesystem::path &path) {
   return toLower(path.extension().string()) == ".csv";
 }
 
+// FlagPrism: Match profile suffixes without requiring C++20 string helpers.
 bool endsWith(const std::string &value, const std::string &suffix) {
   return value.size() >= suffix.size() &&
          value.compare(value.size() - suffix.size(), suffix.size(), suffix) ==
@@ -150,12 +151,14 @@ bool endsWith(const std::string &value, const std::string &suffix) {
 }
 
 bool looksLikeIxkn(const std::filesystem::path &path) {
+  // FlagPrism: Accept profile names emitted by CoreX SDK 4.4 and 5.0.
   auto name = toLower(path.filename().string());
   return endsWith(name, ".ixkn") || endsWith(name, ".ixkn-rep");
 }
 
 std::vector<std::filesystem::path>
 ixknProfileCandidates(const std::filesystem::path &root) {
+  // FlagPrism: Resolve the alternate suffix when the requested path is absent.
   std::vector<std::filesystem::path> candidates{root};
   std::error_code ec;
   auto exists = std::filesystem::exists(root, ec);
@@ -204,6 +207,7 @@ collectIxknFiles(const SessionProfileMetadata &metadata) {
     }
   };
   for (const auto &root : roots) {
+    // FlagPrism: Search both the requested path and its compatible alias.
     for (const auto &candidate : ixknProfileCandidates(root)) {
       std::error_code ec;
       if (!std::filesystem::exists(candidate, ec)) {

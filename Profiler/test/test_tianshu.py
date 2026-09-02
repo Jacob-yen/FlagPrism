@@ -78,6 +78,7 @@ def test_ixkn_basename_resolves_sibling_csv(tmp_path):
                for reason in artifact["degrade_reasons"])
 
 
+# FlagPrism: Verify that the 5.0-style profile is found from the 4.4 path.
 def test_ixkn_rep_profile_is_found_from_ixkn_path(tmp_path):
     requested = tmp_path / "vector_add.ixkn"
     actual = tmp_path / "vector_add.ixkn-rep"
@@ -86,6 +87,7 @@ def test_ixkn_rep_profile_is_found_from_ixkn_path(tmp_path):
     assert tianshu._find_ixkn_profile(requested) == actual
 
 
+# FlagPrism: Verify that import uses the profile path actually emitted by ixKN.
 def test_ixkn_import_uses_actual_rep_profile(monkeypatch, tmp_path):
     requested = tmp_path / "vector_add.ixkn"
     actual = tmp_path / "vector_add.ixkn-rep"
