@@ -366,9 +366,15 @@ C 向函数打的 attribute，F 模块在接线隐藏参数时需读取：
 
 1. **更复杂 pointer 链的数据流分析**：当前地址摘要和 full lane dump 采用有界反向切片，覆盖常见 `tt.addptr(tt.splat(base), offsets)` 和 prefix mask 形态；跨循环 iter_arg、复杂 select/where、非连续 offset、非 prefix mask、非等价 reshape 等形态仍会退回 fallback，或在请求 Level 2 full address 时于编译期报错。
 
-2. **P1-Optional 指标**：`denom_near_zero_count`、`neg_sqrt_count`、有限值样本快照等，由 B 识别敏感 op 类型后 C 插入专用 collector（分工文档 §3.6.2）。直接 `arith.truncf/extf` 的 Level 2 数值转换诊断已由 host post-processing 实现，不属于此剩余项。
+2. **P1-optional metrics**: `denom_near_zero_count`, `neg_sqrt_count`, and
+   finite-value snapshots require B to recognize sensitive operation types and
+   C to insert dedicated collectors (ownership document §3.6.2). Host
+   post-processing already implements Level 2 numerical conversion diagnostics
+   for direct `arith.truncf/extf`, so those diagnostics are not part of this
+   remaining item.
 
-3. **更复杂的 host/storage 关联**：常规 tensor 实参已自动注册 runtime
-   tensor/buffer，地址摘要的 first/last/min/max 也会关联 buffer、offset 和
-   alignment。后续仍需覆盖自定义 tensor descriptor、allocator alias 和无法通过
-   Python tensor protocol 暴露 storage 的对象。
+3. **More complex host/storage association**: regular tensor arguments are
+   already registered as runtime tensors/buffers, and first/last/min/max address
+   summaries are associated with buffers, offsets, and alignment. Future work
+   must cover custom tensor descriptors, allocator aliases, and objects that do
+   not expose storage through the Python tensor protocol.

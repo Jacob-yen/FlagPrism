@@ -65,10 +65,12 @@
   - buffer `bufferName`
   - buffer `alignment`
 
-上述 runtime tensor/buffer 类型是 A/F/D 间的扩展契约。Python 默认 launch path
-会从 tensor-like kernel 实参自动填充 dtype、`shape / stride / layout`、data
-pointer、storage 范围和 alignment，并按 storage 去重 buffer；无法取得编译期参数名时
-使用 `arg<N>`。调用方仍可通过 `runtime_metadata_builder` 覆盖或补充自动结果。
+The runtime tensor and buffer types above form the extended A/F/D contract.
+The default Python launch path derives dtype, `shape / stride / layout`, data
+pointer, storage range, and alignment from tensor-like kernel arguments, and
+deduplicates buffers by storage. It uses `arg<N>` when compile-time parameter
+names are unavailable. Callers can still override or extend the automatic
+result through `runtime_metadata_builder`.
 
 推荐真实 launcher 入口：
 
