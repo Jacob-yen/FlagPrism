@@ -20,7 +20,7 @@ option(TRITON_BUILD_FLAGPRISM
        "Build the bundled FlagPrism debugger and profiler"
        ${_flagprism_default})
 
-set(_flagprism_supported_backends all ascend tianshu)
+set(_flagprism_supported_backends all ascend mthreads tianshu)
 set(_flagprism_backend_default "all")
 if(FLAGTREE_BACKEND STREQUAL "ascend")
   set(_flagprism_backend_default "ascend")
@@ -28,17 +28,20 @@ elseif(FLAGTREE_BACKEND STREQUAL "tianshu" OR
        FLAGTREE_BACKEND STREQUAL "iluvatar" OR
        FLAGTREE_BACKEND STREQUAL "corex")
   set(_flagprism_backend_default "tianshu")
+elseif(FLAGTREE_BACKEND STREQUAL "mthreads" OR
+       FLAGTREE_BACKEND STREQUAL "musa")
+  set(_flagprism_backend_default "mthreads")
 endif()
 if(NOT FLAGPRISM_BACKEND)
   set(FLAGPRISM_BACKEND "${_flagprism_backend_default}" CACHE STRING
-      "FlagPrism vendor backend to compile (all, ascend, or tianshu)" FORCE)
+      "FlagPrism vendor backend to compile (all, ascend, mthreads, or tianshu)" FORCE)
 endif()
 string(TOLOWER "${FLAGPRISM_BACKEND}" FLAGPRISM_BACKEND)
-set_property(CACHE FLAGPRISM_BACKEND PROPERTY STRINGS all ascend tianshu)
+set_property(CACHE FLAGPRISM_BACKEND PROPERTY STRINGS all ascend mthreads tianshu)
 if(NOT FLAGPRISM_BACKEND IN_LIST _flagprism_supported_backends)
   message(FATAL_ERROR
     "Unsupported FLAGPRISM_BACKEND='${FLAGPRISM_BACKEND}'. "
-    "Choose all, ascend, or tianshu.")
+    "Choose all, ascend, mthreads, or tianshu.")
 endif()
 set(FLAGPRISM_BUILD_VENDOR_LOWERING OFF)
 if(FLAGPRISM_BACKEND STREQUAL "all")
@@ -47,7 +50,10 @@ endif()
 message(STATUS "FlagPrism vendor backend: ${FLAGPRISM_BACKEND}")
 
 function(flagprism_apply_backend_compile_definitions target)
-  if(FLAGPRISM_BACKEND STREQUAL "tianshu")
+  if(FLAGPRISM_BACKEND STREQUAL "mthreads")
+    target_compile_definitions(${target}
+      PRIVATE FLAGPRISM_BACKEND_MTHREADS=1)
+  elseif(FLAGPRISM_BACKEND STREQUAL "tianshu")
     target_compile_definitions(${target}
       PRIVATE FLAGPRISM_BACKEND_TIANSHU=1)
   elseif(FLAGPRISM_BACKEND STREQUAL "ascend")
@@ -57,13 +63,16 @@ function(flagprism_apply_backend_compile_definitions target)
 endfunction()
 
 function(flagprism_enable_debugger_runtime target)
-  if(FLAGPRISM_BACKEND STREQUAL "tianshu")
+  if(FLAGPRISM_BACKEND STREQUAL "mthreads")
+    flagtree_debugger_enable_musa(${target})
+  elseif(FLAGPRISM_BACKEND STREQUAL "tianshu")
     flagtree_debugger_enable_corex(${target})
   elseif(FLAGPRISM_BACKEND STREQUAL "ascend")
     flagtree_debugger_enable_cann(${target})
   else()
     flagtree_debugger_enable_cann(${target})
     flagtree_debugger_enable_corex(${target})
+    flagtree_debugger_enable_musa(${target})
   endif()
 endfunction()
 
@@ -125,6 +134,10 @@ macro(flagprism_add_python_components)
     # The Debugger compiler binding follows the existing libtriton plugin
     # model; its runtime binding remains a separate wheel-local extension.
     list(APPEND TRITON_PLUGIN_NAMES "debugger")
+    if(TRITON_BUILD_UT)
+      add_subdirectory("${FLAGPRISM_SOURCE_DIR}/Debugger"
+                       "third_party/FlagPrism/Debugger")
+    endif()
     add_subdirectory("${FLAGPRISM_SOURCE_DIR}/Debugger/native"
                      "third_party/FlagPrism/Debugger/native")
   endif()

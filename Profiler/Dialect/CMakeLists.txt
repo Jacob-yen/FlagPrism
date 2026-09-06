@@ -12,6 +12,8 @@ endif()
 
 add_subdirectory(include)
 add_subdirectory(lib)
+# Keep backend API-compatibility switches on the generic instrumentation pass.
+flagprism_apply_backend_compile_definitions(ProtonToProtonGPU)
 # Keep production registration separate from the legacy lit-only test pass.
 add_triton_library(ProtonRegistration
   lib/Integration/Registration.cpp
@@ -23,6 +25,9 @@ add_triton_library(ProtonRegistration
   ProtonToProtonGPU
   ProtonGPUToLLVM
   ${_flagprism_vendor_lowering_libs}
+)
+target_include_directories(ProtonRegistration PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
 flagprism_apply_backend_compile_definitions(ProtonRegistration)
 # Parent triton-opt keeps running test/Proton; only the pass implementation and

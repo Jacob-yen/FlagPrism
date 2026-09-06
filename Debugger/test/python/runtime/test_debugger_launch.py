@@ -1,10 +1,12 @@
 import importlib.util
+import json
 from pathlib import Path
 import re
 import struct
 from types import SimpleNamespace
 
 import pytest
+import torch
 import triton
 
 from flagtree.debugger import api as debugger
@@ -36,6 +38,48 @@ def _require_backend(*expected: str) -> None:
         pytest.skip(
             f"launcher source test requires one of {expected}, active backend is {backend}"
         )
+
+
+def test_infer_runtime_metadata_captures_tensor_views_and_storage():
+    base = torch.arange(16, dtype=torch.float32).reshape(4, 4)
+    view = base[:, 1:]
+    metadata = SimpleNamespace(argument_names=("base", "view", "count"))
+
+    runtime_metadata = debugger._infer_runtime_metadata(
+        metadata, (base, view, 16))
+
+    assert len(runtime_metadata["buffers"]) == 1
+    buffer = runtime_metadata["buffers"][0]
+    assert buffer["buffer_id"] == 1
+    assert buffer["buffer_name"] == "base"
+    assert buffer["base_address"] == base.untyped_storage().data_ptr()
+    assert buffer["size_bytes"] == base.untyped_storage().nbytes()
+    assert buffer["alignment"] > 0
+
+    assert runtime_metadata["tensors"] == [
+        {
+            "argument_index": 0,
+            "logical_name": "base",
+            "dtype": "float32",
+            "shape": [4, 4],
+            "stride": [4, 1],
+            "layout": "contiguous",
+            "buffer_id": 1,
+            "base_address": base.data_ptr(),
+            "size_bytes": 64,
+        },
+        {
+            "argument_index": 1,
+            "logical_name": "view",
+            "dtype": "float32",
+            "shape": [4, 3],
+            "stride": [4, 1],
+            "layout": "strided",
+            "buffer_id": 1,
+            "base_address": view.data_ptr(),
+            "size_bytes": 60,
+        },
+    ]
 
 
 def test_prepare_kernel_launch_requires_hook():
@@ -690,6 +734,73 @@ def test_level2_full_dump_writes_npy_artifacts_and_reports_paths(
         assert "payload_offset" not in report_text
     finally:
         _reset_debugger_state()
+
+
+def test_precision_diagnostics_compare_direct_float_conversion(tmp_path):
+    numpy = pytest.importorskip("numpy")
+    before = numpy.array([0.1, 1.1, 3.14159, 1000.3], dtype=numpy.float32)
+    after = before.astype(numpy.float16).astype(numpy.float32)
+    before_path = tmp_path / "before.npy"
+    after_path = tmp_path / "after.npy"
+    numpy.save(before_path, before)
+    numpy.save(after_path, after)
+
+    metadata = {
+        "debug_tracked_table": [{
+            "opId":
+            2,
+            "statementId":
+            17,
+            "sourceLoc":
+            "test.py:17",
+            "tritonStatement":
+            "narrowed = value.to(tl.float16)",
+            "mlirOpName":
+            "arith.truncf",
+            "result": {
+                "elementDtype": "f16"
+            },
+            "operands": [{
+                "producerOpId": 1,
+                "value": {
+                    "elementDtype": "f32"
+                },
+            }],
+        }]
+    }
+    artifacts = [{
+        "op_id": 1,
+        "logical_instance_id": 0,
+        "kind": "value",
+        "path": str(before_path),
+    }, {
+        "op_id": 2,
+        "logical_instance_id": 0,
+        "kind": "value",
+        "path": str(after_path),
+    }]
+
+    diagnostics = debugger._build_precision_diagnostics(metadata, artifacts)
+
+    assert len(diagnostics) == 1
+    diagnostic = diagnostics[0]
+    assert diagnostic["from"]["dtype"] == "f32"
+    assert diagnostic["to"]["dtype"] == "f16"
+    assert diagnostic["status"] == "ok"
+    assert diagnostic["suspicious_lane_count"] == 0
+    assert diagnostic["conversion_loss"] == "lossy"
+    assert diagnostic["changed_lane_count"] == 4
+    assert diagnostic["max_abs_error"] > 0
+    assert diagnostic["worst_lane"]["index"] == 3
+
+    report = debugger._inject_precision_diagnostics(
+        json.dumps({"records_by_op": [{
+            "statement_id": 17
+        }]}), diagnostics)
+    document = json.loads(report)
+    assert document["records_by_op"][0]["precision_conversion"] == diagnostics
+    assert "precision_conversion:" in debugger._render_precision_diagnostics(
+        diagnostics)
 
 
 def test_level2_full_dump_requires_output_dir_before_launch(monkeypatch):

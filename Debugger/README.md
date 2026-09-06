@@ -4,7 +4,8 @@ FlagPrism Debugger 用于观察 Triton kernel 内部的数值、内存访问和 
 执行状态。它将编译期静态 metadata 与 device 运行期记录关联，导出 Triton
 语句级报告、IR op 级报告和 level 2 NumPy artifact，用于定位数值异常、异常
 访存和 kernel 内部数据流问题。当前动态采集和 hidden-argument launch 路径已在
-Ascend/CANN9 与 Tianshu/CoreX 4.4 LLVM 22 后端验证；其他后端的接入边界见
+Ascend/CANN9、Tianshu/CoreX 4.4 LLVM 22 与 MUSA/mthreads 4.3.5 后端验证；
+其他后端的接入边界见
 [Backend Support](#backend-support)。
 
 ## Public API
@@ -66,6 +67,13 @@ Debugger-only、Profiler-only 或独立工具 wheel。
 ```bash
 FLAGPRISM_BACKEND=tianshu TRITON_BUILD_FLAGPRISM=ON \
 python3 -m pip install . --no-build-isolation
+```
+
+构建摩尔线程版本时同时选择 FlagTree 和 FlagPrism 的 mthreads 后端：
+
+```bash
+FLAGTREE_BACKEND=mthreads FLAGPRISM_BACKEND=mthreads \
+TRITON_BUILD_FLAGPRISM=ON python3 -m pip install . --no-build-isolation
 ```
 
 ## Quick Start
@@ -199,11 +207,14 @@ IR op 级编译期 metadata 通常包含：
 
 `addr_space` 和 `access_type` 描述一次访存的静态语义，例如
 `addr_space=global access_type=load`；它们位于 `_op_log.txt/.json`，statement
-主报告不会重复展示这些 IR 细节。当前 op log 对未捕获 compiler encoding 的
-Triton SSA register/pointer value 仍可能输出 `stride: unknown` 和
-`layout: unknown`。这些字段不是 PyTorch runtime tensor 的 stride/layout，不能用来
-判断输入是否 contiguous、transpose 或 view；相关清理与 runtime tensor 补充方案记录
-在 [todo.md](todo.md)。
+主报告不会重复展示这些 IR 细节。对于未捕获 compiler encoding 的 Triton SSA
+register/pointer value，报告会省略无意义的静态 `stride/layout`，不会把它们误当成
+PyTorch runtime tensor 布局。
+
+launch 时 Python 前端会自动枚举 tensor 实参，记录 dtype、shape、stride、
+contiguous/strided layout、data pointer、storage 范围和对齐；共享同一 storage 的
+view 会关联到同一个 buffer。能从编译 metadata 取得参数名时使用真实名称，否则使用
+稳定的 `arg<N>` 名称。`runtime_metadata_builder` 仍可用于覆盖或补充自动结果。
 
 ### Level 1 Summary
 
@@ -226,9 +237,12 @@ Triton SSA register/pointer value 仍可能输出 `stride: unknown` 和
 - `max_addr`
 - `active_lane_count`
 - `address_span_bytes`
+- `address_stride_bytes`
+- `address_pattern`（`contiguous`、`strided`、`broadcast`、`irregular` 等）
 
 地址摘要会应用 memory mask。报告中的 `status` 会指示摘要是否完整；
-不支持的 pointer pattern 不会伪造 lane 地址。
+不支持的 pointer pattern 不会伪造 lane 地址。首/末/最小/最大地址还会尽可能关联到
+runtime buffer，输出 buffer id/name、字节 offset 和 `alignment_ok`。
 
 `element_count` 是被观察值的逻辑 lane 数，不等于 mask 后的有效访存 lane 数；
 后者由 `active_lane_count` 表示。
@@ -312,6 +326,13 @@ level 2 要求 `output_dir` 不为 `None`。完整 value/address dump 仅支持
 强制对不支持的 pattern 做 level 2 dump 会在编译期报错，不会生成
 看似成功但数据不完整的报告。
 
+对于直接的 `arith.truncf` / `arith.extf`，level 2 会比较转换前后的 value
+artifact，并在 statement、op-log、JSON 和 `tensor_index.json` 中写入
+`precision_conversion`。诊断包含最大/平均绝对误差、最大相对误差、RMS、L2、
+changed/suspicious lane 数量、worst lane、目标 dtype 容差，以及
+`exact/lossy` 与 `ok/warning` 状态。当前比较是数值级的；跨多条计算链的累计漂移、
+raw bit/ULP 分析仍属于后续工作。
+
 ## Reports
 
 报告文件名由脚本名、kernel 名、时间戳和 run id 组成：
@@ -394,34 +415,36 @@ export TRITON_ASCEND_ARCH=Ascend910B4
 | Statement annotation and static metadata | 通过通用 compiler/frontend callback 接入 |
 | Summary/full-value instrumentation | 依赖目标后端可 lowering 的 TTIR operation |
 | Hidden control pointer and post-kernel export | 当前接入并验证 Ascend/CANN9 与 Tianshu/CoreX 4.4 LLVM 22 |
-| CUDA/HIP/MUSA runtime collection | 协议枚举和 adapter 接口已预留，尚未接通 launcher、同步和 transfer 实现 |
+| CUDA/HIP runtime collection | 协议枚举和 adapter 接口已预留，尚未接通 launcher、同步和 transfer 实现 |
+| MUSA/mthreads runtime collection | 已接通 compiler/launcher、MUSA transfer、stream 同步、summary、地址摘要及 level 2 value/address dump；已在 MUSA 4.3.5 实机验证 |
 | Tianshu/CoreX runtime collection | 复用协议和 hidden pointer；通过 CUDA-compatible driver API 动态加载 CoreX transfer，实现 summary/memory/full dump；device-cycle timeline 暂未启用 |
 
-Debugger 激活时，只有 metadata 明确设置 `debug_launch_hidden_arg=True` 的 Ascend/CANN
-或 Tianshu/CoreX kernel 才会附加 hidden control pointer。未接入的后端不会因为全局 Debugger 状态而
-改变 kernel launch ABI。
+Debugger 激活时，只有 metadata 明确设置 `debug_launch_hidden_arg=True` 的
+Ascend/CANN、Tianshu/CoreX 或 MUSA/mthreads kernel 才会附加 hidden control
+pointer。未接入的后端不会因为全局 Debugger 状态而改变 kernel launch ABI。
 
 ## Current Limitations
 
 - summary 插桩主要依赖通用 TTIR arithmetic/reduce/store。
 - memory address 采集使用 Debugger 专用
   `flagtree_debug.capture_memory_address` operation，需要后端提供 lowering。
-- 当前 CANN9 与 Tianshu/CoreX 4.4 LLVM 22 路径支持对可证明的
+- 当前 CANN9、Tianshu/CoreX 4.4 LLVM 22 与 MUSA/mthreads 4.3.5 路径支持对可证明的
   `tt.addptr(tt.splat(base), offsets)` 指针链和 prefix mask 生成 lane-aware
   address summary。Tianshu/CoreX 对连续地址摘要使用标量 i64 地址计算；这是因为
   当前 CoreX TTIR 到 TTGIR 转换无法 legalize encoded `tensor<i64>` 上的
   `tensor.extract`，并非硬件地址宽度受限。无法完整分析时只报告可证明的地址信息。
 - `addr_level=2` 只能用于后端支持完整 lane address lowering 的
-  pointer/mask pattern；当前 CANN9 与 Tianshu/CoreX 4.4 LLVM 22 支持的 pattern 会生成
-  `*_memory_address.npy`。
+  pointer/mask pattern；当前 CANN9、Tianshu/CoreX 4.4 LLVM 22 与
+  MUSA/mthreads 4.3.5 支持的 pattern 会生成 `*_memory_address.npy`。
 - Debug hidden-argument ABI 尚未穿透任意 Triton call graph。含不可安全
   改写 call signature 的 helper/callee 会保持 metadata-only，避免 Debugger 改变
   原 kernel 语义。
 - 当前报告可按 `logical_instance_id` 对比 program instance，并在 Level 2 地址
   artifact 中查看 lane 地址；尚未直接输出 warp id、异常 lane 聚类或“可疑访存
   上下文”结论。
-- fp16/bf16/fp32 精度转换误差、除数接近零和负数开方等专项异常诊断尚未实现。
-  当前可先用 Level 2 value artifact 离线比较；计划见 [todo.md](todo.md)。
+- fp16/bf16/fp32 直接转换的数值误差诊断已实现。跨长计算链的累计精度漂移、
+  raw bit/ULP，以及除数接近零和负数开方等专项诊断尚未实现；计划见
+  [todo.md](todo.md)。
 
 新增设备后端时，必须验证 summary writer、hidden argument、transfer engine
 和 `capture_memory_address` lowering。
@@ -436,6 +459,8 @@ FlagTree 主仓库仅保留必要的集成点：
 - Ascend compiler/launcher hook：传递 Debugger metadata 和 hidden control pointer。
 - Tianshu/CoreX compiler/launcher hook：使用同一 metadata/hidden pointer 契约；runtime transfer
   通过 `libcuda.so.1` 兼容层动态解析。
+- MUSA/mthreads compiler/launcher hook：使用同一 metadata/hidden pointer 契约；
+  runtime transfer 通过 MUSA driver ABI 动态解析。
 
 Debugger 的主要实现位于当前目录：
 

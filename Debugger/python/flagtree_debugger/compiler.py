@@ -89,6 +89,8 @@ def _debug_launch_hidden_arg_enabled(metadata: dict) -> bool:
             "tianshu",
             "corex",
             "iluvatar",
+            "mthreads",
+            "musa",
     }:
         return False
     # Keep the environment variable as a compatibility hook for subprocesses
@@ -111,8 +113,8 @@ def _kernel_internal_timeline_supported() -> bool:
             triton.runtime.driver.active.get_current_target().backend).lower()
     except Exception:
         return False
-    # Tianshu/CoreX does not expose the Ascend SYS_CNT instruction used by the
-    # current device-cycle timeline implementation.
+    # Tianshu/CoreX and MThreads/MUSA do not expose the Ascend SYS_CNT
+    # instruction used by the current device-cycle timeline implementation.
     return backend in {"ascend", "npu", "cann"}
 
 

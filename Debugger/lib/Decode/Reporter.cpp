@@ -173,6 +173,10 @@ std::string stringOrNA(const std::string &value) {
   return value.empty() ? "<none>" : value;
 }
 
+bool isMeaningfulStaticLayout(const std::string &value) {
+  return !value.empty() && value != "unknown";
+}
+
 std::string joinInt64Vector(const std::vector<int64_t> &values) {
   std::ostringstream os;
   os << "[";
@@ -262,8 +266,10 @@ void renderTrackedOpBlock(std::ostringstream &os,
   os << "    dtype_in: " << formatDtypeInBlock(*trackedOp) << "\n";
   os << "    dtype_out: " << stringOrNA(trackedOp->result.dtype) << "\n";
   os << "    shape: " << stringOrNA(trackedOp->result.shape) << "\n";
-  os << "    stride: " << stringOrNA(trackedOp->result.stride) << "\n";
-  os << "    layout: " << stringOrNA(trackedOp->result.layout) << "\n";
+  if (isMeaningfulStaticLayout(trackedOp->result.stride))
+    os << "    stride: " << trackedOp->result.stride << "\n";
+  if (isMeaningfulStaticLayout(trackedOp->result.layout))
+    os << "    layout: " << trackedOp->result.layout << "\n";
   if (trackedOp->isMemoryOp) {
     os << "    memory_semantics: addr_space="
        << stringOrNA(trackedOp->addrSpace)
@@ -528,6 +534,100 @@ std::string addressSummaryStatus(
   return isAddressSummaryComplete(summary) ? "complete" : "partial";
 }
 
+struct DerivedAddressSummary {
+  std::optional<int64_t> strideBytes;
+  std::string pattern;
+};
+
+std::optional<uint64_t> addressSummaryValue(
+    const std::map<MemoryEventKind, const MemoryEventView *> &summary,
+    MemoryEventKind kind) {
+  auto it = summary.find(kind);
+  if (it == summary.end())
+    return std::nullopt;
+  return it->second->addr;
+}
+
+std::optional<int64_t> signedAddressStride(uint64_t first, uint64_t last,
+                                           uint64_t activeLaneCount) {
+  if (activeLaneCount <= 1)
+    return int64_t{0};
+  const uint64_t divisor = activeLaneCount - 1;
+  const bool descending = last < first;
+  const uint64_t distance = descending ? first - last : last - first;
+  if (distance % divisor != 0)
+    return std::nullopt;
+  const uint64_t magnitude = distance / divisor;
+  if (magnitude > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
+    return std::nullopt;
+  const int64_t signedMagnitude = static_cast<int64_t>(magnitude);
+  return descending ? -signedMagnitude : signedMagnitude;
+}
+
+std::optional<DerivedAddressSummary> deriveAddressSummary(
+    const std::map<MemoryEventKind, const MemoryEventView *> &summary,
+    uint32_t accessBytes) {
+  if (!isAddressSummaryComplete(summary))
+    return std::nullopt;
+
+  const uint64_t first =
+      *addressSummaryValue(summary, MemoryEventKind::FIRST_ADDR);
+  const uint64_t last =
+      *addressSummaryValue(summary, MemoryEventKind::LAST_ADDR);
+  const uint64_t minimum =
+      *addressSummaryValue(summary, MemoryEventKind::MIN_ADDR);
+  const uint64_t maximum =
+      *addressSummaryValue(summary, MemoryEventKind::MAX_ADDR);
+  const uint64_t activeLaneCount =
+      *addressSummaryValue(summary, MemoryEventKind::ACTIVE_LANE_COUNT);
+  const uint64_t span =
+      *addressSummaryValue(summary, MemoryEventKind::ADDRESS_SPAN_BYTES);
+
+  DerivedAddressSummary derived;
+  if (activeLaneCount == 0) {
+    derived.pattern = "empty";
+    return derived;
+  }
+  if (activeLaneCount == 1) {
+    derived.strideBytes = 0;
+    derived.pattern = "single";
+    return derived;
+  }
+
+  derived.strideBytes = signedAddressStride(first, last, activeLaneCount);
+  if (!derived.strideBytes || minimum > maximum) {
+    derived.pattern = "irregular";
+    return derived;
+  }
+
+  const uint64_t addressRange = maximum - minimum;
+  const uint64_t absoluteStride =
+      *derived.strideBytes < 0 ? static_cast<uint64_t>(-*derived.strideBytes)
+                               : static_cast<uint64_t>(*derived.strideBytes);
+  if (addressRange == 0 && first == minimum && last == maximum) {
+    derived.pattern = "broadcast";
+    return derived;
+  }
+
+  const uint64_t steps = activeLaneCount - 1;
+  const bool coversRange = first >= minimum && first <= maximum &&
+                           last >= minimum && last <= maximum &&
+                           addressRange % steps == 0 &&
+                           addressRange / steps == absoluteStride;
+  const bool spanMatches =
+      accessBytes == 0 ||
+      (addressRange <= std::numeric_limits<uint64_t>::max() - accessBytes &&
+       span == addressRange + accessBytes);
+  if (!coversRange || !spanMatches) {
+    derived.pattern = "irregular";
+  } else if (accessBytes != 0 && absoluteStride == accessBytes) {
+    derived.pattern = "contiguous";
+  } else {
+    derived.pattern = "strided";
+  }
+  return derived;
+}
+
 std::string formatMemorySummaryCell(MemoryEventKind kind,
                                     const MemoryEventView *event) {
   if (!event) {
@@ -538,6 +638,40 @@ std::string formatMemorySummaryCell(MemoryEventKind kind,
     return std::to_string(event->addr);
   }
   return hexValue(event->addr);
+}
+
+bool isAddressBoundaryKind(MemoryEventKind kind) {
+  return kind == MemoryEventKind::FIRST_ADDR ||
+         kind == MemoryEventKind::LAST_ADDR ||
+         kind == MemoryEventKind::MIN_ADDR || kind == MemoryEventKind::MAX_ADDR;
+}
+
+std::string formatAddressSummaryCell(const DecodedDebugRun *run,
+                                     const TrackedOpEntry *trackedOp,
+                                     MemoryEventKind kind,
+                                     const MemoryEventView *event) {
+  std::string cell = formatMemorySummaryCell(kind, event);
+  if (!run || !event || !isAddressBoundaryKind(kind))
+    return cell;
+
+  std::ostringstream os;
+  os << cell;
+  const auto *buffer = findContainingBuffer(run->runtimeMetadata, event->addr);
+  if (buffer) {
+    os << " (bufferId=" << buffer->bufferId
+       << " name=" << stringOrNA(buffer->bufferName)
+       << " offset=" << (event->addr - buffer->baseAddress);
+  } else {
+    os << " (bufferId=not captured offset=not captured";
+  }
+  if (trackedOp && trackedOp->alignmentRequired != 0) {
+    os << " alignment_ok="
+       << boolString(event->addr % trackedOp->alignmentRequired == 0);
+  } else {
+    os << " alignment_ok=not captured";
+  }
+  os << ")";
+  return os.str();
 }
 
 struct TextMetricRow {
@@ -566,7 +700,9 @@ buildSummaryRows(const std::map<uint64_t, InstanceReportGroup> &instances) {
 
 std::vector<TextMetricRow> buildAddressSummaryRows(
     const std::map<uint64_t, InstanceReportGroup> &instances,
-    std::optional<uint32_t> ext0Filter = std::nullopt) {
+    uint32_t accessBytes = 0, std::optional<uint32_t> ext0Filter = std::nullopt,
+    const DecodedDebugRun *run = nullptr,
+    const TrackedOpEntry *trackedOp = nullptr) {
   std::vector<std::map<MemoryEventKind, const MemoryEventView *>> summaries;
   summaries.reserve(instances.size());
   bool hasAnyAddressSummary = false;
@@ -593,10 +729,34 @@ std::vector<TextMetricRow> buildAddressSummaryRows(
     row.label = addressSummaryFieldName(*kind);
     for (const auto &summary : summaries) {
       auto it = summary.find(*kind);
-      row.cells.push_back(formatMemorySummaryCell(
-          *kind, it == summary.end() ? nullptr : it->second));
+      row.cells.push_back(formatAddressSummaryCell(
+          run, trackedOp, *kind, it == summary.end() ? nullptr : it->second));
     }
     rows.push_back(std::move(row));
+  }
+
+  TextMetricRow strideRow;
+  strideRow.label = "address_stride_bytes";
+  TextMetricRow patternRow;
+  patternRow.label = "address_pattern";
+  bool hasDerivedSummary = false;
+  for (const auto &summary : summaries) {
+    const std::optional<DerivedAddressSummary> derived =
+        deriveAddressSummary(summary, accessBytes);
+    if (!derived) {
+      strideRow.cells.push_back("not captured");
+      patternRow.cells.push_back("not captured");
+      continue;
+    }
+    hasDerivedSummary = true;
+    strideRow.cells.push_back(derived->strideBytes
+                                  ? std::to_string(*derived->strideBytes)
+                                  : "not captured");
+    patternRow.cells.push_back(derived->pattern);
+  }
+  if (hasDerivedSummary) {
+    rows.push_back(std::move(strideRow));
+    rows.push_back(std::move(patternRow));
   }
   return rows;
 }
@@ -857,8 +1017,9 @@ void renderInstanceAlignedData(std::ostringstream &os,
   }
 
   std::vector<TextMetricRow> summaryRows = buildSummaryRows(opGroup.instances);
-  std::vector<TextMetricRow> addressRows =
-      buildAddressSummaryRows(opGroup.instances);
+  std::vector<TextMetricRow> addressRows = buildAddressSummaryRows(
+      opGroup.instances, opGroup.trackedOp ? opGroup.trackedOp->accessBytes : 0,
+      std::nullopt, &run, opGroup.trackedOp);
 
   std::vector<size_t> columnWidths;
   updateColumnWidths(columnWidths, instanceCells);
@@ -905,7 +1066,10 @@ bool hasStatementRuntimeDetails(const OpReportGroup *opGroup) {
     return false;
   if (!collectSummaryMetrics(opGroup->instances).empty())
     return true;
-  if (!buildAddressSummaryRows(opGroup->instances).empty())
+  if (!buildAddressSummaryRows(
+           opGroup->instances,
+           opGroup->trackedOp ? opGroup->trackedOp->accessBytes : 0)
+           .empty())
     return true;
   for (const auto &instanceEntry : opGroup->instances) {
     if (hasFallbackMemoryEvents(instanceEntry.second))
@@ -914,7 +1078,7 @@ bool hasStatementRuntimeDetails(const OpReportGroup *opGroup) {
   return false;
 }
 
-void renderStatementRuntime(std::ostringstream &os,
+void renderStatementRuntime(std::ostringstream &os, const DecodedDebugRun &run,
                             const OpReportGroup *opGroup, const char *indent,
                             bool includeArtifactFiles) {
   if (!opGroup || opGroup->instances.empty()) {
@@ -929,8 +1093,10 @@ void renderStatementRuntime(std::ostringstream &os,
   }
 
   std::vector<TextMetricRow> summaryRows = buildSummaryRows(opGroup->instances);
-  std::vector<TextMetricRow> addressRows =
-      buildAddressSummaryRows(opGroup->instances);
+  std::vector<TextMetricRow> addressRows = buildAddressSummaryRows(
+      opGroup->instances,
+      opGroup->trackedOp ? opGroup->trackedOp->accessBytes : 0, std::nullopt,
+      &run, opGroup->trackedOp);
 
   std::vector<size_t> columnWidths;
   updateColumnWidths(columnWidths, instanceCells);
@@ -1174,8 +1340,9 @@ void renderMemoryAccess(std::ostringstream &os, const DecodedDebugRun &run,
   const std::optional<uint32_t> ext0Filter =
       use.hasAddressExt0 ? std::optional<uint32_t>(use.addressExt0)
                          : std::nullopt;
-  std::vector<TextMetricRow> addressRows =
-      buildAddressSummaryRows(use.runtime->instances, ext0Filter);
+  std::vector<TextMetricRow> addressRows = buildAddressSummaryRows(
+      use.runtime->instances, use.accessOp ? use.accessOp->accessBytes : 0,
+      ext0Filter, &run, use.accessOp);
   const std::string addressSummaryLabel =
       statementAddressSummaryLabel(use.accessOp);
   if (addressRows.empty()) {
@@ -1250,7 +1417,7 @@ void renderStatementValue(std::ostringstream &os, const DecodedDebugRun &run,
   const OpReportGroup *captureGroup = findCaptureGroup(value, byOp);
   if (value.isConstant && !hasStatementRuntimeDetails(captureGroup))
     return;
-  renderStatementRuntime(os, captureGroup, "    ", includeArtifactFiles);
+  renderStatementRuntime(os, run, captureGroup, "    ", includeArtifactFiles);
 }
 
 void renderStatementRecords(std::ostringstream &os, const DecodedDebugRun &run,
@@ -1420,18 +1587,21 @@ llvm::json::Array jsonInt64Vector(const std::vector<int64_t> &values) {
 }
 
 llvm::json::Object jsonStaticValueInfo(const StaticValueInfo &info) {
-  return llvm::json::Object{
+  llvm::json::Object object{
       {"value_kind", info.valueKind},
       {"dtype", info.dtype},
       {"element_dtype", info.elementDtype},
       {"shape", info.shape},
-      {"stride", info.stride},
-      {"layout", info.layout},
       {"encoding", info.encoding},
       {"addr_space", info.addrSpace},
       {"rank", static_cast<int64_t>(info.rank)},
       {"element_bits", static_cast<int64_t>(info.elementBits)},
       {"vec_width", static_cast<int64_t>(info.vecWidth)}};
+  if (isMeaningfulStaticLayout(info.stride))
+    object["stride"] = info.stride;
+  if (isMeaningfulStaticLayout(info.layout))
+    object["layout"] = info.layout;
+  return object;
 }
 
 llvm::json::Object jsonOperandStaticInfo(const OperandStaticInfo &info) {
@@ -1568,14 +1738,20 @@ llvm::json::Object jsonSummaryCell(const SummaryMetricValue *value) {
   return object;
 }
 
-llvm::json::Object jsonAddressSummaryCell(MemoryEventKind kind,
+llvm::json::Object jsonAddressSummaryCell(const DecodedDebugRun *run,
+                                          const TrackedOpEntry *trackedOp,
+                                          MemoryEventKind kind,
                                           const MemoryEventView *event) {
   if (!event) {
     return llvm::json::Object{{"status", "not_captured"}};
   }
-  return llvm::json::Object{{"status", "captured"},
+  llvm::json::Object object{{"status", "captured"},
                             {"value", jsonUnsigned(event->addr)},
                             {"display", formatMemorySummaryCell(kind, event)}};
+  if (run && isAddressBoundaryKind(kind))
+    object["runtime_address"] =
+        jsonRuntimeAddressContext(*run, trackedOp, event->addr);
+  return object;
 }
 
 llvm::json::Object jsonMemoryEvent(const DecodedDebugRun &run,
@@ -1631,9 +1807,11 @@ jsonInstanceIds(const std::map<uint64_t, InstanceReportGroup> &instances) {
 }
 
 bool addJsonAddressSummary(
-    llvm::json::Object &object,
+    llvm::json::Object &object, const DecodedDebugRun &run,
+    const TrackedOpEntry *trackedOp,
     const std::map<uint64_t, InstanceReportGroup> &instances,
     std::optional<uint32_t> ext0Filter = std::nullopt) {
+  const uint32_t accessBytes = trackedOp ? trackedOp->accessBytes : 0;
   std::vector<std::map<MemoryEventKind, const MemoryEventView *>>
       addressSummaries;
   bool hasAnyAddressSummary = false;
@@ -1658,9 +1836,33 @@ bool addJsonAddressSummary(
     for (const auto &summaryForInstance : addressSummaries) {
       auto it = summaryForInstance.find(*kind);
       cells.push_back(jsonAddressSummaryCell(
-          *kind, it == summaryForInstance.end() ? nullptr : it->second));
+          &run, trackedOp, *kind,
+          it == summaryForInstance.end() ? nullptr : it->second));
     }
     addressSummary[addressSummaryFieldName(*kind)] = std::move(cells);
+  }
+
+  llvm::json::Array strideBytes;
+  llvm::json::Array patterns;
+  bool hasDerivedSummary = false;
+  for (const auto &summaryForInstance : addressSummaries) {
+    const std::optional<DerivedAddressSummary> derived =
+        deriveAddressSummary(summaryForInstance, accessBytes);
+    if (!derived) {
+      strideBytes.push_back(nullptr);
+      patterns.push_back(nullptr);
+      continue;
+    }
+    hasDerivedSummary = true;
+    if (derived->strideBytes)
+      strideBytes.push_back(*derived->strideBytes);
+    else
+      strideBytes.push_back(nullptr);
+    patterns.push_back(derived->pattern);
+  }
+  if (hasDerivedSummary) {
+    addressSummary["address_stride_bytes"] = std::move(strideBytes);
+    addressSummary["address_pattern"] = std::move(patterns);
   }
   object["address_summary"] = std::move(addressSummary);
   return true;
@@ -1705,7 +1907,8 @@ llvm::json::Object jsonMemoryAccessReport(const DecodedDebugRun &run,
         use.hasAddressExt0 ? std::optional<uint32_t>(use.addressExt0)
                            : std::nullopt;
     runtime["instances"] = jsonInstanceIds(use.runtime->instances);
-    if (!addJsonAddressSummary(runtime, use.runtime->instances, ext0Filter))
+    if (!addJsonAddressSummary(runtime, run, use.accessOp,
+                               use.runtime->instances, ext0Filter))
       runtime["address_summary"] =
           llvm::json::Object{{"status", "not_captured"}};
     llvm::json::Array memoryEvents = jsonMemoryEventsByInstance(
@@ -1717,7 +1920,8 @@ llvm::json::Object jsonMemoryAccessReport(const DecodedDebugRun &run,
   return object;
 }
 
-llvm::json::Object jsonStatementRuntimeReport(const OpReportGroup *opGroup) {
+llvm::json::Object jsonStatementRuntimeReport(const DecodedDebugRun &run,
+                                              const OpReportGroup *opGroup) {
   if (!opGroup || opGroup->instances.empty())
     return llvm::json::Object{{"status", "not_captured"}};
 
@@ -1738,7 +1942,7 @@ llvm::json::Object jsonStatementRuntimeReport(const OpReportGroup *opGroup) {
   if (!summary.empty())
     object["summary"] = std::move(summary);
 
-  addJsonAddressSummary(object, opGroup->instances);
+  addJsonAddressSummary(object, run, opGroup->trackedOp, opGroup->instances);
 
   llvm::json::Array fullValueRefsByInstance =
       jsonFullValueRefsByInstance(opGroup->instances);
@@ -1773,7 +1977,7 @@ llvm::json::Object jsonOpReportGroup(const DecodedDebugRun &run,
     object["summary"] = std::move(summary);
   }
 
-  addJsonAddressSummary(object, opGroup.instances);
+  addJsonAddressSummary(object, run, opGroup.trackedOp, opGroup.instances);
 
   llvm::json::Array memoryEventsByInstance =
       jsonMemoryEventsByInstance(run, opGroup.trackedOp, opGroup.instances);
@@ -1794,7 +1998,6 @@ llvm::json::Object
 jsonStatementValueReport(const DecodedDebugRun &run,
                          const StatementValueInfo &value,
                          const std::map<uint32_t, OpReportGroup> &byOp) {
-  (void)run;
   llvm::json::Object object{
       {"source_name", value.sourceName},
       {"source_role", value.sourceRole},
@@ -1804,7 +2007,7 @@ jsonStatementValueReport(const DecodedDebugRun &run,
   };
   const auto captureIt = byOp.find(value.captureOpId);
   if (captureIt != byOp.end()) {
-    object["runtime"] = jsonStatementRuntimeReport(&captureIt->second);
+    object["runtime"] = jsonStatementRuntimeReport(run, &captureIt->second);
   } else {
     object["runtime"] = llvm::json::Object{
         {"status", value.isConstant ? "constant" : "not_captured"}};

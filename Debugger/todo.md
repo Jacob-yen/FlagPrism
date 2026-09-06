@@ -2,8 +2,10 @@
 
 ## Precision conversion error report
 
-- [ ] Add a statement-level report section for precision conversion and
-  precision drift, covering fp16, bf16, fp32 and related conversions.
+- [x] Add statement-level diagnostics for direct `arith.truncf` and
+  `arith.extf` conversions, covering fp16, bf16 and fp32 numeric comparisons.
+- [ ] Extend precision diagnostics across longer producer/consumer compute
+  chains so accumulated drift can be attributed to the responsible region.
 
 Target presentation:
 
@@ -27,12 +29,12 @@ precision_conversion:
 
 Implementation notes:
 
-- Start with level2 post-processing: read the existing statement JSON and
+- Direct conversion diagnostics use level2 post-processing: read the existing statement JSON and
   `*_value.npy` artifacts, identify cast/convert producer-consumer pairs, and
   compute absolute/relative/RMS/L2 error metrics plus worst lane information.
-- Integrate the computed metrics into the statement-level report as
-  `precision_conversion` for direct casts and `precision_error` or
-  `precision_drift` for longer compute chains.
+- Direct-cast `precision_conversion` is integrated into statement/op-log text,
+  JSON and `tensor_index.json`; `precision_error` or `precision_drift` for
+  longer compute chains remains future work.
 - Keep the no-error case explicit: near-zero error should render with
   `status: [ok]`, empty `suspicious_lanes`, and no warning wording.
 - Current full dump normalizes fp16/bf16/fp32 values to float32 artifacts, which
@@ -43,7 +45,7 @@ Implementation notes:
 
 ## Value layout and stride report cleanup
 
-- [ ] Remove meaningless `stride: unknown` and `layout: unknown` rows from
+- [x] Remove meaningless `stride: unknown` and `layout: unknown` rows from
   statement/op reports when the value is a Triton SSA register value or pointer
   lane tensor and no compiler encoding was captured.
 
@@ -104,3 +106,12 @@ value_layout:
   compiler_layout: #ttg.blocked<{...}>
   layout_stage   : ttgir
 ```
+
+## Sensitive-operation diagnostics
+
+- [ ] Add `denom_near_zero_count` for division/remainder-like operations.
+- [ ] Add `neg_sqrt_count` for square-root operations.
+- [ ] Add bounded finite-value samples where a summary alone is insufficient.
+
+These checks require operation-specific operand capture and tolerances; they
+must not infer warnings from unrelated result summaries.

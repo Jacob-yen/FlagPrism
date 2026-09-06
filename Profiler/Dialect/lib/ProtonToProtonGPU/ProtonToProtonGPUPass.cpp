@@ -62,7 +62,14 @@ void instrumentWarpSpecializeOps(FuncOp func, Value buffer, Value profileMem) {
   for (auto wsOp : func.getOps<triton::gpu::WarpSpecializeOp>()) {
     auto loc = wsOp.getLoc();
     if (hasOperator<Operation, proton::RecordOp>(wsOp.getOperation())) {
+#if defined(FLAGPRISM_BACKEND_MTHREADS)
+      // MThreads stores explicit captures on the nested partitions op.
+      auto partitions = wsOp.getPartitionOp();
+      partitions->insertOperands(partitions->getNumOperands(),
+                                 {buffer, profileMem});
+#else
       wsOp->insertOperands(wsOp->getNumOperands(), {buffer, profileMem});
+#endif
       for (Region *region : wsOp.getPartitionRegions()) {
         region->addArgument(buffer.getType(), loc);
         region->addArgument(profileMem.getType(), loc);
@@ -272,8 +279,13 @@ public:
     llvm::SmallVector<unsigned, 1> ctasPerCGA{1};
     llvm::SmallVector<unsigned, 1> ctaSplitNum{1};
     llvm::SmallVector<unsigned, 1> ctaOrder{0};
+#if defined(FLAGPRISM_BACKEND_MTHREADS)
+    auto ctaLayout = triton::gpu::CGAEncodingAttr::fromSplitParams(
+        context, ctasPerCGA, ctaSplitNum, ctaOrder);
+#else
     auto ctaLayout = triton::gpu::CTAEncodingAttr::fromSplitParams(
         context, ctasPerCGA, ctaSplitNum, ctaOrder);
+#endif
     auto encoding = triton::gpu::SwizzledSharedEncodingAttr::get(
         context, 1, 1, 1, {0}, ctaLayout);
 

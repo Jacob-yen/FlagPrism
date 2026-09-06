@@ -2,7 +2,15 @@ add_profiler_library(FlagTreeProfilerBindings
   Profiler.cpp
 )
 
-if(FLAGPRISM_BACKEND STREQUAL "tianshu")
+if(FLAGPRISM_BACKEND STREQUAL "mthreads")
+  add_profiler_library(FlagTreeProfilerMthreads
+    lib/Driver/Mthreads/MthreadsApi.cpp
+    lib/Profiler/Vendor/Adapter.cpp
+    lib/Profiler/Vendor/MthreadsAdapter.cpp
+    lib/Profiler/Vendor/MthreadsProfiler.cpp
+    lib/Profiler/Vendor/Mode.cpp
+  )
+elseif(FLAGPRISM_BACKEND STREQUAL "tianshu")
   add_profiler_library(FlagTreeProfilerTianshu
     lib/Profiler/Vendor/Adapter.cpp
     lib/Profiler/Vendor/TianshuAdapter.cpp
@@ -25,6 +33,9 @@ else()
     lib/Profiler/Vendor/CannProfiler.cpp
     lib/Profiler/Vendor/TianshuAdapter.cpp
     lib/Profiler/Vendor/TianshuProfiler.cpp
+    lib/Driver/Mthreads/MthreadsApi.cpp
+    lib/Profiler/Vendor/MthreadsAdapter.cpp
+    lib/Profiler/Vendor/MthreadsProfiler.cpp
     lib/Profiler/Vendor/Mode.cpp
   )
 endif()

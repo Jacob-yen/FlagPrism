@@ -23,7 +23,7 @@ BackendKind resolveBackendKindName(std::string_view backendName) {
   if (lowered == "hip" || lowered == "rocm" || lowered == "amd") {
     return BackendKind::HIP;
   }
-  if (lowered == "musa") {
+  if (lowered == "musa" || lowered == "mthreads") {
     return BackendKind::MUSA;
   }
   if (lowered == "cann" || lowered == "ascend") {

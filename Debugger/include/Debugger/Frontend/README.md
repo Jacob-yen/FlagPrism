@@ -65,10 +65,10 @@
   - buffer `bufferName`
   - buffer `alignment`
 
-上述 runtime tensor/buffer 类型是 A/F/D 间的扩展契约。当前 Python 默认 launch
-path 只自动补充 grid、record plan 等 debugger metadata，尚未自动从 PyTorch
-kernel 实参填充 tensor `shape / stride / layout`；调用方可通过
-`runtime_metadata_builder` 显式提供，自动采集仍是后续工作。
+上述 runtime tensor/buffer 类型是 A/F/D 间的扩展契约。Python 默认 launch path
+会从 tensor-like kernel 实参自动填充 dtype、`shape / stride / layout`、data
+pointer、storage 范围和 alignment，并按 storage 去重 buffer；无法取得编译期参数名时
+使用 `arg<N>`。调用方仍可通过 `runtime_metadata_builder` 覆盖或补充自动结果。
 
 推荐真实 launcher 入口：
 
