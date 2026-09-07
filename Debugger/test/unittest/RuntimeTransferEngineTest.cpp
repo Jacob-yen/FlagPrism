@@ -22,9 +22,17 @@ TEST(TransferDriverSelectionTest, ResolvesBackendKindsToDriverKinds) {
   EXPECT_EQ(resolveTransferDriverKind(BackendKind::HIP),
             TransferDriverKind::HOST);
   EXPECT_EQ(resolveTransferDriverKind(BackendKind::MUSA),
-            TransferDriverKind::HOST);
+            TransferDriverKind::MUSA);
   EXPECT_EQ(resolveTransferDriverKind(BackendKind::TIANSHU),
             TransferDriverKind::COREX);
+}
+
+TEST(TransferDriverSelectionTest, BuildsMusaOptionsFromMthreadsBackend) {
+  TransferEngineOptions options =
+      makeTransferEngineOptions(BackendKind::MUSA, 0x3456);
+
+  EXPECT_EQ(options.driverKind, TransferDriverKind::MUSA);
+  EXPECT_EQ(options.streamHandle, 0x3456u);
 }
 
 TEST(TransferDriverSelectionTest, BuildsCoreXOptionsFromTianshuBackend) {
@@ -328,7 +336,7 @@ TEST(RealTransferEngineTest, AsyncExportCopiesOnWait) {
   engine->release(ctx);
 }
 
-TEST(RealTransferEngineTest, CannDriverRejectsNonCannBufferMeta) {
+TEST(RealTransferEngineTest, CannDriverRejectsUnavailableOrNonCannBufferMeta) {
   auto engine = createTransferEngine(BackendKind::CANN);
 
   EXPECT_DEATH(
@@ -336,7 +344,8 @@ TEST(RealTransferEngineTest, CannDriverRejectsNonCannBufferMeta) {
         (void)engine->prepare(makeTestBufferMeta(), makeTestBufferPlan(),
                               makeTestRuntimeMetadata());
       },
-      "BufferMeta\\.backendKind == CANN");
+      "BufferMeta\\.backendKind == CANN|transfer engine driver 'cann' is not "
+      "available");
 }
 
 } // namespace

@@ -1,13 +1,16 @@
 #include "Device.h"
-#if !defined(FLAGPRISM_BACKEND_TIANSHU)
+#if !defined(FLAGPRISM_BACKEND_TIANSHU) && !defined(FLAGPRISM_BACKEND_MTHREADS)
 #include "Driver/Ascend/AscendApi.h"
 #endif
 #if FLAGTREE_PROFILER_GPU_RUNTIME
 #include "Driver/GPU/CudaApi.h"
 #include "Driver/GPU/HipApi.h"
 #endif
-#if !defined(FLAGPRISM_BACKEND_ASCEND)
+#if !defined(FLAGPRISM_BACKEND_ASCEND) && !defined(FLAGPRISM_BACKEND_MTHREADS)
 #include "Driver/Tianshu/TianshuApi.h"
+#endif
+#if !defined(FLAGPRISM_BACKEND_ASCEND) && !defined(FLAGPRISM_BACKEND_TIANSHU)
+#include "Driver/Mthreads/MthreadsApi.h"
 #endif
 
 #include "Utility/Errors.h"
@@ -23,14 +26,19 @@ Device getDevice(DeviceType type, uint64_t index) {
     return hip::getDevice(index);
   }
 #endif
-#if !defined(FLAGPRISM_BACKEND_TIANSHU)
+#if !defined(FLAGPRISM_BACKEND_TIANSHU) && !defined(FLAGPRISM_BACKEND_MTHREADS)
   if (type == DeviceType::ASCEND) {
     return ascend::getDevice(index);
   }
 #endif
-#if !defined(FLAGPRISM_BACKEND_ASCEND)
+#if !defined(FLAGPRISM_BACKEND_ASCEND) && !defined(FLAGPRISM_BACKEND_MTHREADS)
   if (type == DeviceType::TIANSHU) {
     return tianshu::getDevice(index);
+  }
+#endif
+#if !defined(FLAGPRISM_BACKEND_ASCEND) && !defined(FLAGPRISM_BACKEND_TIANSHU)
+  if (type == DeviceType::MTHREADS) {
+    return mthreads::getDevice(index);
   }
 #endif
   throw std::runtime_error("DeviceType not supported");
@@ -43,16 +51,19 @@ const std::string getDeviceTypeString(DeviceType type) {
   if (type == DeviceType::HIP) {
     return DeviceTraits<DeviceType::HIP>::name;
   }
-#if !defined(FLAGPRISM_BACKEND_TIANSHU)
+#if !defined(FLAGPRISM_BACKEND_TIANSHU) && !defined(FLAGPRISM_BACKEND_MTHREADS)
   if (type == DeviceType::ASCEND) {
     return DeviceTraits<DeviceType::ASCEND>::name;
   }
 #endif
-#if !defined(FLAGPRISM_BACKEND_ASCEND)
+#if !defined(FLAGPRISM_BACKEND_ASCEND) && !defined(FLAGPRISM_BACKEND_MTHREADS)
   if (type == DeviceType::TIANSHU) {
     return DeviceTraits<DeviceType::TIANSHU>::name;
   }
 #endif
+  if (type == DeviceType::MTHREADS) {
+    return DeviceTraits<DeviceType::MTHREADS>::name;
+  }
   throw std::runtime_error("DeviceType not supported");
 }
 

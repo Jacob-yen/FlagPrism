@@ -541,8 +541,13 @@ void dumpKernelMetricTrace(
       auto runtimeOpName = flexibleMetricString(event, "runtime.op_name");
       element["name"] =
           runtimeOpName.empty() ? contexts.back().name : runtimeOpName;
+      const bool isMthreadsRuntime = vendorSource == "runtime_base_fallback" ||
+                                     vendorSource == "mthreads_runtime" ||
+                                     vendorSource.rfind("mupti_", 0) == 0;
+      const auto runtimeCategory =
+          isMthreadsRuntime ? "mthreads_runtime:" : "cann_runtime:";
       element["cat"] =
-          vendorSource.empty() ? "kernel" : "cann_runtime:" + vendorSource;
+          vendorSource.empty() ? "kernel" : runtimeCategory + vendorSource;
       element["ph"] = "X";
       element["pid"] = 0;
       element["ts"] = ts;

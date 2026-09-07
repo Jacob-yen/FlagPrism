@@ -30,13 +30,32 @@ set(FLAGTREE_LIBTRITON "" CACHE FILEPATH
 set(PROFILER_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/csrc")
 set(PROFILER_COMMON_DIR "${CMAKE_CURRENT_SOURCE_DIR}/common")
 
-# FlagTree's Ascend/Tianshu paths use vendor APIs loaded at runtime instead of
+# MThreads' vendor profiler loads the MUPTI activity ABI dynamically, so its
+# SDK headers are optional and libmupti is not a hard link dependency.
+set(FLAGTREE_MTHREADS_MUPTI_INCLUDE_DIR "" CACHE PATH
+    "MThreads MUPTI include directory")
+if(FLAGPRISM_BACKEND STREQUAL "mthreads" OR
+   FLAGPRISM_BACKEND STREQUAL "all")
+  if(NOT FLAGTREE_MTHREADS_MUPTI_INCLUDE_DIR)
+    # An empty cached value makes find_path() skip its search. Remove only the
+    # empty entry so automatic SDK discovery still runs on the first configure.
+    unset(FLAGTREE_MTHREADS_MUPTI_INCLUDE_DIR CACHE)
+    find_path(FLAGTREE_MTHREADS_MUPTI_INCLUDE_DIR
+      NAMES mupti_activity.h
+      HINTS
+        "$ENV{MUSA_HOME}/include"
+        "/usr/local/musa/include"
+    )
+  endif()
+endif()
+
+# FlagTree's Ascend/Tianshu/MThreads paths use vendor APIs instead of
 # compiling against CUDA/CUPTI/ROCtracer headers. Keep the switch explicit so
-# CoreX/Tianshu builds can validate the component without CUDA SDK packages.
+# vendor builds can validate the component without CUDA SDK packages.
 option(FLAGTREE_PROFILER_GPU_RUNTIME
        "Build the CUDA/HIP profiler runtime adapters" ON)
-if(FLAGTREE_BACKEND MATCHES "^(ascend|tianshu)$" OR
-   FLAGPRISM_BACKEND MATCHES "^(ascend|tianshu)$")
+if(FLAGTREE_BACKEND MATCHES "^(ascend|mthreads|tianshu)$" OR
+   FLAGPRISM_BACKEND MATCHES "^(ascend|mthreads|tianshu)$")
   set(FLAGTREE_PROFILER_GPU_RUNTIME OFF)
 endif()
 
@@ -114,6 +133,14 @@ function(add_profiler_library name)
   target_compile_definitions(${name} PRIVATE
     FLAGTREE_PROFILER_GPU_RUNTIME=$<BOOL:${FLAGTREE_PROFILER_GPU_RUNTIME}>)
   flagprism_apply_backend_compile_definitions(${name})
+  if(FLAGTREE_MTHREADS_MUPTI_INCLUDE_DIR AND
+     (FLAGPRISM_BACKEND STREQUAL "mthreads" OR
+      FLAGPRISM_BACKEND STREQUAL "all"))
+    target_include_directories(${name} SYSTEM PRIVATE
+      "${FLAGTREE_MTHREADS_MUPTI_INCLUDE_DIR}")
+    target_compile_definitions(${name} PRIVATE
+      FLAGTREE_MTHREADS_HAS_MUPTI=1)
+  endif()
   if(FLAGTREE_PROFILER_GPU_RUNTIME)
     # If HIP is AMD-based.
     target_compile_definitions(${name} PRIVATE __HIP_PLATFORM_AMD__)

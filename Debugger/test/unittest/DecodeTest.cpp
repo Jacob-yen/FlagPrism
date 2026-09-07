@@ -94,7 +94,8 @@ makeMemory(uint32_t opId, uint64_t instance, uint64_t addr,
 
 void writeAddressSummaryRecords(DebugExportedRun &run, uint32_t &slot,
                                 uint32_t opId, uint64_t instance,
-                                uint64_t baseAddr, uint32_t ext0 = 0) {
+                                uint64_t baseAddr, uint64_t strideBytes = 4,
+                                uint32_t accessBytes = 4, uint32_t ext0 = 0) {
   const MemoryEventKind addressKinds[] = {
       MemoryEventKind::FIRST_ADDR,        MemoryEventKind::LAST_ADDR,
       MemoryEventKind::MIN_ADDR,          MemoryEventKind::MAX_ADDR,
@@ -102,13 +103,47 @@ void writeAddressSummaryRecords(DebugExportedRun &run, uint32_t &slot,
   };
   for (MemoryEventKind kind : addressKinds) {
     uint64_t value = baseAddr;
-    if (kind == MemoryEventKind::ACTIVE_LANE_COUNT)
+    if (kind == MemoryEventKind::LAST_ADDR || kind == MemoryEventKind::MAX_ADDR)
+      value = baseAddr + 3 * strideBytes;
+    else if (kind == MemoryEventKind::ACTIVE_LANE_COUNT)
       value = 4;
     else if (kind == MemoryEventKind::ADDRESS_SPAN_BYTES)
-      value = 16;
+      value = 3 * strideBytes + accessBytes;
     writeObject(run.rawBuffer, slotOffset(slot++),
                 makeMemory(opId, instance, value, kind, ext0));
   }
+}
+
+TEST(DebuggerDecodeTest, DerivesContiguousAndStridedAddressPatterns) {
+  DebugExportedRun run = makeRun(/*capacity=*/16, /*writeIdx=*/12);
+  uint32_t slot = 0;
+  writeAddressSummaryRecords(run, slot, /*opId=*/1, /*instance=*/0,
+                             /*baseAddr=*/0x1000, /*strideBytes=*/4);
+  writeAddressSummaryRecords(run, slot, /*opId=*/1, /*instance=*/1,
+                             /*baseAddr=*/0x2000, /*strideBytes=*/8);
+  ASSERT_EQ(slot, 12u);
+
+  DecodedDebugRun decoded;
+  std::string error;
+  ASSERT_TRUE(decodeExportedRun(run, decoded, &error)) << error;
+
+  KernelDebugMetadata metadata = makeTestKernelDebugMetadata(
+      /*scopeCount=*/1, /*trackedOpCount=*/1, /*includeMemoryOp=*/true);
+  std::string report = renderTextReport(decoded, metadata);
+  EXPECT_NE(report.find("address_stride_bytes"), std::string::npos);
+  EXPECT_NE(report.find("contiguous"), std::string::npos);
+  EXPECT_NE(report.find("strided"), std::string::npos);
+  EXPECT_NE(report.find("bufferId=1 name=input offset=0 alignment_ok=true"),
+            std::string::npos);
+
+  std::string json = renderJsonReport(decoded, metadata);
+  EXPECT_NE(json.find("\"address_stride_bytes\":[4,8]"), std::string::npos);
+  EXPECT_NE(json.find("\"address_pattern\":[\"contiguous\",\"strided\"]"),
+            std::string::npos);
+  EXPECT_NE(json.find("\"runtime_address\""), std::string::npos);
+  EXPECT_NE(json.find("\"buffer_id\":1"), std::string::npos);
+  EXPECT_NE(json.find("\"offset\":12"), std::string::npos);
+  EXPECT_NE(json.find("\"alignment_ok\":true"), std::string::npos);
 }
 
 FullValueRefRecord makeFullValue(uint32_t opId, uint64_t instance,
@@ -504,6 +539,28 @@ TEST(DebuggerDecodeTest, RendersReportWithDynamicRecords) {
   EXPECT_NE(report.find("Runtime Inventory"), std::string::npos);
   EXPECT_EQ(report.find("Aggregates"), std::string::npos);
   EXPECT_EQ(report.find("latest.element_count=128"), std::string::npos);
+}
+
+TEST(DebuggerDecodeTest, OmitsUnknownStaticStrideAndLayout) {
+  DebugExportedRun run = makeGoldenReportRun();
+
+  DecodedDebugRun decoded;
+  std::string error;
+  ASSERT_TRUE(decodeExportedRun(run, decoded, &error)) << error;
+
+  KernelDebugMetadata metadata = makeTestKernelDebugMetadata();
+  for (TrackedOpEntry &entry : metadata.trackedOps) {
+    entry.result.stride = "unknown";
+    entry.result.layout = "unknown";
+  }
+
+  const std::string report = renderTextReport(decoded, metadata);
+  EXPECT_EQ(report.find("stride: unknown"), std::string::npos);
+  EXPECT_EQ(report.find("layout: unknown"), std::string::npos);
+
+  const std::string json = renderJsonReport(decoded, metadata);
+  EXPECT_EQ(json.find("\"stride\":\"unknown\""), std::string::npos);
+  EXPECT_EQ(json.find("\"layout\":\"unknown\""), std::string::npos);
 }
 
 TEST(DebuggerDecodeTest, RendersTritonStatementRecords) {

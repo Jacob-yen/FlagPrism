@@ -112,10 +112,18 @@ def get_raw_metrics(file):
     database = remove_frames(database)
     device_info = database.pop(1)
     gf = ht.GraphFrame.from_literal(database)
+    # Vendor profiles keep provenance and state strings beside numeric metrics.
+    # Preserve those columns for inspection, but do not ask Hatchet to sum them
+    # while constructing inclusive metrics.
+    gf.exc_metrics = [
+        metric for metric in gf.exc_metrics
+        if pd.api.types.is_numeric_dtype(gf.dataframe[metric])
+    ]
     inclusive_metrics = gf.show_metric_columns()
     exclusive_metrics = [
         metric for metric in gf.dataframe.columns
         if metric not in inclusive_metrics
+        and pd.api.types.is_numeric_dtype(gf.dataframe[metric])
     ]
     return gf, inclusive_metrics, exclusive_metrics, device_info
 

@@ -1,3 +1,4 @@
+import json
 import pytest
 import subprocess
 from flagtree.profiler.viewer import get_min_time_flops, get_min_time_bytes, read, format_frames, derive_metrics, filter_frames, parse
@@ -94,6 +95,43 @@ def test_parse():
     gf, derived_metrics = parse(["time/s"], triton_example_file)
     for derived_metric in derived_metrics:
         assert derived_metric in gf.inc_metrics or derived_metric in gf.exc_metrics
+
+
+def test_non_numeric_vendor_metadata_is_not_aggregated(tmp_path):
+    profile = tmp_path / "vendor.hatchet"
+    profile.write_text(
+        json.dumps([
+            {
+                "frame": {
+                    "name": "ROOT",
+                    "type": "function"
+                },
+                "metrics": {
+                    "time (ns)": 0,
+                    "vendor.source": 0
+                },
+                "children": [{
+                    "frame": {
+                        "name": "kernel",
+                        "type": "function"
+                    },
+                    "metrics": {
+                        "time (ns)": 10,
+                        "vendor.source": "mupti_activity"
+                    },
+                    "children": [],
+                }],
+            },
+            {},
+        ]))
+
+    gf, _, exclusive_metrics, _ = read(profile)
+
+    assert "vendor.source" in gf.dataframe
+    assert "vendor.source" not in gf.exc_metrics
+    assert "vendor.source" not in exclusive_metrics
+    assert gf.dataframe.loc[gf.dataframe["name"] == "ROOT",
+                            "time (ns) (inc)"].item() == 10
 
 
 def test_min_time_flops():

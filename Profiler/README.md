@@ -32,6 +32,13 @@ FLAGPRISM_BACKEND=tianshu TRITON_BUILD_FLAGPRISM=ON \
 python -m pip install . --no-build-isolation
 ```
 
+For Moore Threads, select `mthreads` in both FlagTree and FlagPrism:
+
+```bash
+FLAGTREE_BACKEND=mthreads FLAGPRISM_BACKEND=mthreads \
+TRITON_BUILD_FLAGPRISM=ON python -m pip install . --no-build-isolation
+```
+
 ## Usage
 
 ### Basic usage
@@ -106,14 +113,46 @@ FlagTree Profiler supports `cupti`, `roctracer`, `instrumentation`, `cann`, and
 - **`roctracer`**: Used for AMD GPUs. It supports only the default profiling mode.
 - **`instrumentation`**: Available on both NVIDIA and AMD GPUs, this backend enables collection of custom metrics and advanced instrumentation.
 - **`cann`**: Uses the Ascend vendor adapter and CANN runtime/import path.
+- **`mthreads`**: Uses the native MUPTI callback/activity interface. The
+  currently enabled vendor metric is `launch_stats`, which reports kernel
+  launch timing, geometry and resource fields when the SDK supplies them.
 - **`tianshu`**: Reuses Debugger instrumentation through the CoreX-compatible
   driver and imports ixKN CSV output. Use the `flagtree-profiler --ixkn` CLI
   wrapper because ixKN profiles the target process from startup.
 
 By default, FlagTree Profiler automatically selects `cupti`, `roctracer`,
-`cann`, or `tianshu` based on the active target backend. The `instrumentation`
+`cann`, `mthreads`, or `tianshu` based on the active target backend. The `instrumentation`
 backend offers a wide range of mode options for fine-grained profiling, as
 detailed in the `mode.py` file.
+
+#### Moore Threads / MUPTI
+
+The verified mthreads vendor mode is:
+
+```python
+import flagtree.profiler as profiler
+
+profiler.start(
+    name="mthreads_profile",
+    backend="mthreads",
+    mode="runtime_base:vendor_metrics=launch_stats",
+)
+# launch Triton kernels
+profiler.finalize()
+```
+
+The default native path uses MUPTI launch callbacks and writes a session-local
+`*.mupti.csv`, then associates those rows with FlagPrism runtime events in the
+`*.vendor.json` artifact. Set `mupti_activity=1` in the mode only on MUSA
+runtimes where the activity-buffer path is known to be stable; MUSA 4.3 can
+retain incomplete activity buffers during shutdown. An explicit
+`mupti_import_path=<csv>` remains available for import-only validation.
+
+Hardware-counter metrics such as occupancy, bandwidth and instruction counts
+are not currently enabled for mthreads. MUSA's modern profiler target API needs
+counter configuration and evaluation support (normally supplied through the
+Perfworks layer), which is not integrated in FlagPrism yet. Unsupported metric
+names are reported as degraded instead of being silently fabricated.
 
 #### Instruction Sampling
 

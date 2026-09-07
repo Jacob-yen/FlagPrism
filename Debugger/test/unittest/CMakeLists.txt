@@ -3,6 +3,12 @@ add_triton_ut(
   SRCS InstrumentationTest.cpp
   LIBS
     FlagTreeDebugger
+    TritonAnalysis
+    TritonGPUIR
+    TritonNvidiaGPUIR
+    TritonGPUTransforms
+    TritonNvidiaGPUTransforms
+    TritonTools
 )
 
 add_triton_ut(
@@ -21,12 +27,12 @@ add_triton_ut(
   NAME DebuggerDecode
   SRCS DecodeTest.cpp
   LIBS
-    FlagTreeDebugger
+    FlagTreeDebuggerDecode
 )
 
 add_triton_ut(
   NAME FlagTreeDebuggerMetadataTest
   SRCS MetadataTest.cpp
   LIBS
-    FlagTreeDebugger
+    FlagTreeDebuggerDecode
 )

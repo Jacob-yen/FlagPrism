@@ -80,10 +80,12 @@
 - `DebugLaunchContext.streamHandle` 用于把 F 的 H2D / D2H 操作和实际 kernel
   launch stream 对齐；A 未接线前允许保持 `0`。
 
-`DebugRuntimeMetadata` 已定义 launch tensor/buffer registry，但当前 Python 默认
-launch path 尚未自动枚举 PyTorch kernel 参数，因此常规报告中的
-`Runtime Inventory` 目前可能显示 `buffers: 0`、`tensors: 0`。调用方可通过
-`runtime_metadata_builder` 填充；自动采集 runtime shape/stride/layout 尚待实现。
+The default Python launch path now populates the launch tensor/buffer registry
+in `DebugRuntimeMetadata`. It enumerates tensor-like kernel arguments, records
+runtime shape/stride/layout, data pointers, and storage ranges, and deduplicates
+views that share a buffer by storage. Unrecognized non-tensor arguments are
+ignored. Callers can override or extend the automatic result through
+`runtime_metadata_builder`.
 
 真实后端入口：
 

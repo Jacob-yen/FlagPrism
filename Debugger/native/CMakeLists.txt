@@ -61,6 +61,7 @@ add_triton_plugin(TritonDebugger
   LINK_LIBS
   MLIRIR
   MLIRPass
+  MLIRPtrDialect
   LLVMSupport
 )
 target_link_libraries(TritonDebugger PRIVATE Python3::Module pybind11::headers)
@@ -109,6 +110,7 @@ include("${DEBUGGER_ROOT}/lib/Runtime/CoreX.cmake")
 if(NOT FLAGPRISM_BACKEND STREQUAL "tianshu")
   include("${DEBUGGER_ROOT}/lib/Runtime/CANN.cmake")
 endif()
+include("${DEBUGGER_ROOT}/lib/Runtime/MUSA.cmake")
 flagprism_enable_debugger_runtime(flagtree_debugger_native)
 
 set(_flagtree_debugger_output_dir

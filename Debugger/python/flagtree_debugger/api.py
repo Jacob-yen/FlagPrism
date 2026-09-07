@@ -547,6 +547,248 @@ def _write_full_dump_artifacts(
     return artifacts
 
 
+def _precision_tolerance(dtype: str) -> tuple[float, float]:
+    normalized = dtype.lower()
+    if "bf16" in normalized:
+        return 1e-2, 1e-2
+    if "f16" in normalized:
+        return 1e-3, 5e-4
+    if "f32" in normalized:
+        return 1e-6, 1e-6
+    return 0.0, 0.0
+
+
+def _diagnostic_number(value: Any) -> float | str:
+    number = float(value)
+    if number != number:
+        return "nan"
+    if number == float("inf"):
+        return "inf"
+    if number == -float("inf"):
+        return "-inf"
+    return number
+
+
+def _build_precision_diagnostics(
+        metadata_dict: Mapping[str, Any],
+        artifacts: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    try:
+        import numpy as np
+    except ImportError:
+        return []
+
+    value_artifacts: dict[tuple[int, int], Mapping[str, Any]] = {}
+    for artifact in artifacts:
+        if artifact.get("kind") != "value" or not artifact.get("path"):
+            continue
+        key = (int(artifact.get("op_id",
+                                0)), int(artifact.get("logical_instance_id",
+                                                      0)))
+        value_artifacts.setdefault(key, artifact)
+
+    diagnostics: list[dict[str, Any]] = []
+    tracked_table = metadata_dict.get("debug_tracked_table") or []
+    for tracked in tracked_table:
+        if not isinstance(tracked, Mapping):
+            continue
+        mlir_op = str(tracked.get("mlirOpName", ""))
+        if mlir_op not in {"arith.extf", "arith.truncf"}:
+            continue
+        operands = tracked.get("operands") or []
+        operand = next((item for item in operands if isinstance(item, Mapping)
+                        and int(item.get("producerOpId", 0)) != 0), None)
+        if operand is None:
+            continue
+        op_id = int(tracked.get("opId", 0))
+        producer_op_id = int(operand.get("producerOpId", 0))
+        from_dtype = str((operand.get("value") or {}).get("elementDtype", ""))
+        to_dtype = str((tracked.get("result") or {}).get("elementDtype", ""))
+        abs_tolerance, rel_tolerance = _precision_tolerance(to_dtype)
+
+        instance_ids = sorted(
+            instance_id for artifact_op_id, instance_id in value_artifacts
+            if artifact_op_id == op_id and (producer_op_id,
+                                            instance_id) in value_artifacts)
+        for instance_id in instance_ids:
+            before_artifact = value_artifacts[(producer_op_id, instance_id)]
+            after_artifact = value_artifacts[(op_id, instance_id)]
+            try:
+                before = np.load(str(before_artifact["path"])).reshape(-1)
+                after = np.load(str(after_artifact["path"])).reshape(-1)
+            except (OSError, ValueError):
+                continue
+            if before.shape != after.shape:
+                continue
+
+            before64 = before.astype(np.float64, copy=False)
+            after64 = after.astype(np.float64, copy=False)
+            same_nonfinite = ((np.isnan(before64) & np.isnan(after64)) |
+                              ((before64 == after64) & np.isinf(before64)
+                               & np.isinf(after64)))
+            finite_pairs = np.isfinite(before64) & np.isfinite(after64)
+            abs_error = np.zeros(before64.shape, dtype=np.float64)
+            abs_error[finite_pairs] = np.abs(after64[finite_pairs] -
+                                             before64[finite_pairs])
+            abs_error[~finite_pairs & ~same_nonfinite] = np.inf
+            rel_error = np.zeros(before64.shape, dtype=np.float64)
+            nonzero = finite_pairs & (np.abs(before64) > 0)
+            rel_error[nonzero] = (abs_error[nonzero] /
+                                  np.abs(before64[nonzero]))
+            rel_error[finite_pairs & ~nonzero & (abs_error > 0)] = np.inf
+            rel_error[~finite_pairs & ~same_nonfinite] = np.inf
+
+            suspicious = (~same_nonfinite & ~finite_pairs) | (
+                finite_pairs &
+                (abs_error > abs_tolerance + rel_tolerance * np.abs(before64)))
+            suspicious_indices = np.flatnonzero(suspicious)
+            changed = (~same_nonfinite & ~finite_pairs) | (finite_pairs &
+                                                           (abs_error > 0))
+            changed_indices = np.flatnonzero(changed)
+            finite_error = abs_error[np.isfinite(abs_error)]
+            if finite_error.size:
+                max_abs_error = float(np.max(finite_error))
+                mean_abs_error = float(np.mean(finite_error))
+                rms_error = float(np.sqrt(np.mean(finite_error**2)))
+                l2_error = float(np.sqrt(np.sum(finite_error**2)))
+            else:
+                max_abs_error = mean_abs_error = rms_error = l2_error = 0.0
+            finite_relative = rel_error[np.isfinite(rel_error)]
+            max_rel_error = (float(np.max(finite_relative))
+                             if finite_relative.size else 0.0)
+
+            worst_lane = None
+            if abs_error.size:
+                worst_index = int(np.argmax(abs_error))
+                worst_lane = {
+                    "index": worst_index,
+                    "before": _diagnostic_number(before64[worst_index]),
+                    "after": _diagnostic_number(after64[worst_index]),
+                    "abs_error": _diagnostic_number(abs_error[worst_index]),
+                    "rel_error": _diagnostic_number(rel_error[worst_index]),
+                }
+
+            diagnostics.append({
+                "op_id":
+                op_id,
+                "producer_op_id":
+                producer_op_id,
+                "logical_instance_id":
+                instance_id,
+                "statement_id":
+                int(tracked.get("statementId", 0)),
+                "source_loc":
+                str(tracked.get("sourceLoc", "")),
+                "statement":
+                str(tracked.get("tritonStatement", "")),
+                "conversion_op":
+                mlir_op,
+                "from": {
+                    "dtype": from_dtype,
+                    "artifact": str(before_artifact["path"]),
+                },
+                "to": {
+                    "dtype": to_dtype,
+                    "artifact": str(after_artifact["path"]),
+                },
+                "comparison_basis":
+                "numeric value before/after conversion",
+                "element_count":
+                int(before64.size),
+                "max_abs_error":
+                max_abs_error,
+                "mean_abs_error":
+                mean_abs_error,
+                "max_rel_error":
+                max_rel_error,
+                "rms_error":
+                rms_error,
+                "l2_error":
+                l2_error,
+                "suspicious_lane_count":
+                int(suspicious_indices.size),
+                "suspicious_lanes":
+                [int(index) for index in suspicious_indices[:64]],
+                "suspicious_lanes_truncated":
+                bool(suspicious_indices.size > 64),
+                "changed_lane_count":
+                int(changed_indices.size),
+                "conversion_loss":
+                "lossy" if changed_indices.size else "exact",
+                "worst_lane":
+                worst_lane,
+                "tolerance": {
+                    "abs": abs_tolerance,
+                    "rel": rel_tolerance,
+                },
+                "status":
+                "warning" if suspicious_indices.size else "ok",
+            })
+    return diagnostics
+
+
+def _render_precision_diagnostics(
+        diagnostics: Sequence[Mapping[str, Any]]) -> str:
+    if not diagnostics:
+        return ""
+    lines = ["Precision Conversion Diagnostics"]
+    for diagnostic in diagnostics:
+        lines.extend([
+            f"statement_id: {diagnostic['statement_id']}",
+            f"statement: {diagnostic['statement']}",
+            "precision_conversion:",
+            f"  op_id: {diagnostic['op_id']}",
+            f"  logical_instance_id: {diagnostic['logical_instance_id']}",
+            f"  from: {diagnostic['from']['dtype']}",
+            f"  to: {diagnostic['to']['dtype']}",
+            f"  max_abs_error: {diagnostic['max_abs_error']}",
+            f"  mean_abs_error: {diagnostic['mean_abs_error']}",
+            f"  max_rel_error: {diagnostic['max_rel_error']}",
+            f"  rms_error: {diagnostic['rms_error']}",
+            f"  l2_error: {diagnostic['l2_error']}",
+            f"  suspicious_lane_count: {diagnostic['suspicious_lane_count']}",
+            f"  suspicious_lanes: {diagnostic['suspicious_lanes']}",
+            f"  changed_lane_count: {diagnostic['changed_lane_count']}",
+            f"  conversion_loss: {diagnostic['conversion_loss']}",
+            f"  worst_lane: {diagnostic['worst_lane']}",
+            f"  tolerance: {diagnostic['tolerance']}",
+            f"  status: {diagnostic['status']}",
+            "",
+        ])
+    return "\n".join(lines).rstrip()
+
+
+def _inject_precision_diagnostics(report: str,
+                                  diagnostics: Sequence[Mapping[str, Any]],
+                                  *,
+                                  op_log: bool = False) -> str:
+    if not report or not diagnostics:
+        return report
+    try:
+        document = json.loads(report)
+    except (TypeError, ValueError):
+        return report
+    document["precision_diagnostics"] = list(diagnostics)
+    if op_log:
+        records = (document.get("op_log") or {}).get("records_by_op") or []
+        for record in records:
+            matches = [
+                item for item in diagnostics
+                if int(item["op_id"]) == int(record.get("op_id", 0))
+            ]
+            if matches:
+                record["precision_conversion"] = matches
+    else:
+        for statement in document.get("records_by_op") or []:
+            matches = [
+                item for item in diagnostics
+                if int(item["statement_id"]) == int(
+                    statement.get("statement_id", 0))
+            ]
+            if matches:
+                statement["precision_conversion"] = matches
+    return json.dumps(document, indent=2, sort_keys=True)
+
+
 def _finalize_exported_run(exported_run: dict[str, Any],
                            metadata_dict: dict[str, Any]) -> dict[str, Any]:
     exported_run["debug_kernel_name"] = str(
@@ -569,12 +811,26 @@ def _finalize_exported_run(exported_run: dict[str, Any],
         report_path = _build_report_path(output_dir, exported_run,
                                          metadata_dict)
 
+    precision_diagnostics: list[dict[str, Any]] = []
     if _is_full_dump_run(metadata_dict):
         if report_path is None:
             raise RuntimeError(
                 "level-2 debugger full dump requires debugger output_dir")
-        _write_full_dump_artifacts(report_path, exported_run, decoded,
-                                   metadata_dict)
+        artifacts = _write_full_dump_artifacts(report_path, exported_run,
+                                               decoded, metadata_dict)
+        precision_diagnostics = _build_precision_diagnostics(
+            metadata_dict, artifacts)
+        if precision_diagnostics:
+            runtime_metadata = dict(exported_run.get("runtime_metadata") or {})
+            runtime_metadata["precision_diagnostics"] = precision_diagnostics
+            exported_run["runtime_metadata"] = runtime_metadata
+            exported_run["precision_diagnostics"] = precision_diagnostics
+            index_path = exported_run.get("full_dump_index_path")
+            if index_path:
+                index = json.loads(Path(index_path).read_text())
+                index["precision_diagnostics"] = precision_diagnostics
+                Path(index_path).write_text(
+                    json.dumps(index, indent=2, sort_keys=True))
 
     summary = _render_export_summary(exported_run, decoded, metadata_dict)
     report = ""
@@ -592,6 +848,9 @@ def _finalize_exported_run(exported_run: dict[str, Any],
         else:
             report = binding.render_text_report(exported_run,
                                                 str(metadata_json))
+        precision_report = _render_precision_diagnostics(precision_diagnostics)
+        if precision_report:
+            report = f"{report.rstrip()}\n\n{precision_report}\n"
         exported_run["report"] = report
 
         render_text_op_log_report = getattr(binding,
@@ -609,6 +868,8 @@ def _finalize_exported_run(exported_run: dict[str, Any],
                               getattr(binding, "render_json_report", None))
         if callable(render_json_report):
             json_report = render_json_report(exported_run, str(metadata_json))
+            json_report = _inject_precision_diagnostics(
+                json_report, precision_diagnostics)
             exported_run["json_report"] = json_report
 
         render_json_op_log_report = getattr(binding,
@@ -616,6 +877,8 @@ def _finalize_exported_run(exported_run: dict[str, Any],
         if callable(render_json_op_log_report):
             op_log_json_report = render_json_op_log_report(
                 exported_run, str(metadata_json))
+            op_log_json_report = _inject_precision_diagnostics(
+                op_log_json_report, precision_diagnostics, op_log=True)
             exported_run["op_log_json_report"] = op_log_json_report
 
     report_text = summary
@@ -707,6 +970,170 @@ def _normalize_launch_grid(
     )
 
 
+def _call_runtime_value(value: Any, name: str) -> Any:
+    member = getattr(value, name, None)
+    return member() if callable(member) else member
+
+
+def _runtime_int_list(value: Any) -> list[int] | None:
+    if value is None or isinstance(value, (str, bytes, bytearray)):
+        return None
+    try:
+        return [int(item) for item in value]
+    except (TypeError, ValueError):
+        return None
+
+
+def _runtime_argument_names(metadata: Any, argument_count: int) -> list[str]:
+    metadata_dict = _metadata_to_dict(metadata)
+    for key in (
+            "debug_argument_names",
+            "argument_names",
+            "arg_names",
+            "signature",
+    ):
+        candidate = metadata_dict.get(key)
+        if isinstance(candidate, Mapping):
+            names = [str(name) for name in candidate]
+        elif isinstance(candidate,
+                        Sequence) and not isinstance(candidate,
+                                                     (str, bytes, bytearray)):
+            names = [str(name) for name in candidate]
+        else:
+            continue
+        if len(names) >= argument_count:
+            return names
+    return [f"arg{index}" for index in range(argument_count)]
+
+
+def _runtime_alignment(address: int) -> int:
+    if address <= 0:
+        return 0
+    # The native contract stores alignment in uint32_t. Keep the greatest
+    # representable power-of-two divisor rather than overflowing the field.
+    return min(address & -address, 1 << 31)
+
+
+def _runtime_tensor_layout(value: Any, shape: list[int],
+                           stride: list[int]) -> str:
+    is_contiguous = getattr(value, "is_contiguous", None)
+    if callable(is_contiguous):
+        try:
+            if bool(is_contiguous()):
+                return "contiguous"
+        except (RuntimeError, TypeError):
+            pass
+    if shape or stride:
+        return "strided"
+    return "unknown"
+
+
+def _runtime_tensor_size_bytes(value: Any, shape: list[int], stride: list[int],
+                               element_size: int) -> int:
+    numel = _call_runtime_value(value, "numel")
+    try:
+        logical_bytes = int(numel) * element_size
+    except (TypeError, ValueError):
+        logical_bytes = 0
+    if not shape or not stride or len(shape) != len(stride):
+        return max(0, logical_bytes)
+    if any(dim == 0 for dim in shape):
+        return 0
+    span_elements = 1
+    for dim, step in zip(shape, stride):
+        if dim > 0:
+            span_elements += (dim - 1) * abs(step)
+    return max(logical_bytes, span_elements * element_size)
+
+
+def _infer_runtime_metadata(metadata: Any,
+                            kernel_args: Sequence[Any]) -> dict[str, Any]:
+    """Build the runtime tensor/buffer inventory from launch arguments.
+
+    The launcher deliberately forwards the original Python arguments, so this
+    stays backend-neutral and does not alter the hidden-argument ABI. Objects
+    without the tensor protocol used here are ignored.
+    """
+    names = _runtime_argument_names(metadata, len(kernel_args))
+    buffers: list[dict[str, Any]] = []
+    tensors: list[dict[str, Any]] = []
+    buffer_ids: dict[tuple[str, int, int], int] = {}
+
+    for argument_index, original_value in enumerate(kernel_args):
+        value = original_value
+        data_ptr = getattr(value, "data_ptr", None)
+        if not callable(data_ptr):
+            # Tensor descriptor objects expose their underlying tensor as
+            # ``base`` on current Triton frontends.
+            value = getattr(original_value, "base", None)
+            data_ptr = getattr(value, "data_ptr", None)
+        if value is None or not callable(data_ptr):
+            continue
+
+        try:
+            address = int(data_ptr())
+            shape = _runtime_int_list(_call_runtime_value(value, "shape"))
+            stride = _runtime_int_list(_call_runtime_value(value, "stride"))
+            element_size = int(_call_runtime_value(value, "element_size"))
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            continue
+        if address <= 0 or shape is None or stride is None or element_size <= 0:
+            continue
+
+        logical_name = names[argument_index]
+        dtype = str(_call_runtime_value(value, "dtype") or "")
+        if dtype.startswith("torch."):
+            dtype = dtype[len("torch."):]
+        device = str(_call_runtime_value(value, "device") or "")
+        tensor_size = _runtime_tensor_size_bytes(value, shape, stride,
+                                                 element_size)
+
+        buffer_base = address
+        buffer_size = tensor_size
+        storage = _call_runtime_value(value, "untyped_storage")
+        if storage is not None:
+            storage_data_ptr = getattr(storage, "data_ptr", None)
+            if callable(storage_data_ptr):
+                try:
+                    buffer_base = int(storage_data_ptr())
+                except (RuntimeError, TypeError, ValueError):
+                    buffer_base = address
+            storage_nbytes = _call_runtime_value(storage, "nbytes")
+            try:
+                buffer_size = int(storage_nbytes)
+            except (TypeError, ValueError):
+                buffer_size = tensor_size
+
+        key = (device, buffer_base, buffer_size)
+        buffer_id = buffer_ids.get(key)
+        if buffer_id is None:
+            buffer_id = len(buffer_ids) + 1
+            buffer_ids[key] = buffer_id
+            buffers.append({
+                "buffer_id": buffer_id,
+                "buffer_name": logical_name,
+                "base_address": buffer_base,
+                "size_bytes": max(0, buffer_size),
+                "alignment": _runtime_alignment(buffer_base),
+            })
+
+        tensors.append({
+            "argument_index": argument_index,
+            "logical_name": logical_name,
+            "dtype": dtype,
+            "shape": shape,
+            "stride": stride,
+            "layout": _runtime_tensor_layout(value, shape, stride),
+            "buffer_id": buffer_id,
+            "base_address": address,
+            "size_bytes": tensor_size,
+        })
+
+    if not buffers and not tensors:
+        return {}
+    return {"buffers": buffers, "tensors": tensors}
+
+
 def _build_launch_metadata_dict(metadata: Any) -> dict[str, Any]:
     metadata_dict = _metadata_to_dict(metadata)
     target = metadata_dict.get("target")
@@ -754,12 +1181,12 @@ def _default_launch_prepare_hook(
         kernel_args: Sequence[Any]) -> PreparedKernelLaunch:
     launch_metadata = _materialize_launch_metadata(launch_metadata)
     metadata_dict = _build_launch_metadata_dict(metadata)
-    runtime_metadata = {}
+    runtime_metadata = _infer_runtime_metadata(metadata, kernel_args)
     if _active_config.runtime_metadata_builder is not None:
         built_runtime_metadata = _active_config.runtime_metadata_builder(
             metadata, launch_metadata, kernel_args)
         if built_runtime_metadata is not None:
-            runtime_metadata = dict(built_runtime_metadata)
+            runtime_metadata.update(dict(built_runtime_metadata))
     grid = _normalize_launch_grid(launch_metadata)
     if grid is not None:
         runtime_metadata.setdefault("grid", grid)
@@ -827,12 +1254,13 @@ def prepare_metadata_only_kernel_launch(
 
     launch_metadata = _materialize_launch_metadata(launch_metadata)
     metadata_dict = _build_launch_metadata_dict(metadata)
-    runtime_metadata: dict[str, Any] = {}
+    runtime_metadata = _infer_runtime_metadata(metadata,
+                                               tuple(kernel_args or ()))
     if _active_config.runtime_metadata_builder is not None:
         built_runtime_metadata = _active_config.runtime_metadata_builder(
             metadata, launch_metadata, tuple(kernel_args or ()))
         if built_runtime_metadata is not None:
-            runtime_metadata = dict(built_runtime_metadata)
+            runtime_metadata.update(dict(built_runtime_metadata))
     grid = _normalize_launch_grid(launch_metadata)
     if grid is not None:
         runtime_metadata.setdefault("grid", grid)
@@ -1059,6 +1487,10 @@ def launch_context(
                 import torch
 
                 torch.cuda.synchronize()
+            elif backend in {"mthreads", "musa"}:
+                import torch
+
+                torch.musa.synchronize()
             else:
                 raise RuntimeError(
                     f"FlagPrism has no hidden-argument synchronization adapter "
