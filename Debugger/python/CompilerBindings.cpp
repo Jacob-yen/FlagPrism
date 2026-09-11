@@ -24,6 +24,11 @@ void loadDebuggerDialect(mlir::MLIRContext &context) {
   context.loadDialect<mlir::flagtree::debugger::FlagTreeDebugDialect>();
 }
 
+void validateRecordLevel(int32_t level) {
+  if (level != 1 && level != 2)
+    throw py::value_error("debugger level must be 1 or 2");
+}
+
 } // namespace
 
 void init_flagtree_debugger_compiler(py::module_ &m) {
@@ -64,6 +69,7 @@ void init_flagtree_debugger_compiler(py::module_ &m) {
   m.def("create_debug_collect_begin",
         [](TritonOpBuilder &builder, int32_t level,
            int32_t addrLevel) -> OpState {
+          validateRecordLevel(level);
           loadDebuggerDialect(*builder.getContext());
           auto &opBuilder = builder.getBuilder();
           auto addrLevelAttr = addrLevel < 0
@@ -80,6 +86,7 @@ void init_flagtree_debugger_compiler(py::module_ &m) {
         [](ModuleOp mod) { return hasDebugCollectMarkers(mod); });
   m.def("insert_default_debug_collect_markers", [](ModuleOp mod, int32_t level,
                                                    int32_t addrLevel) {
+    validateRecordLevel(level);
     return succeeded(insertDefaultDebugCollectMarkers(mod, level, addrLevel));
   });
   m.def("get_debug_tracked_op_table_json",

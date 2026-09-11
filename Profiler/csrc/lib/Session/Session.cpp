@@ -780,6 +780,10 @@ std::unique_ptr<Session> SessionManager::makeSession(
     if (vendorAdapter->getName() == "mthreads" &&
         !vendorPlan.enabledVendorMetrics.empty() &&
         vendorPlan.requested.adapterOptions.count("mupti_import_path") == 0 &&
+        vendorPlan.requested.adapterOptions.count("mthreads_import_path") ==
+            0 &&
+        vendorPlan.requested.adapterOptions.count("mcu_import_path") == 0 &&
+        vendorPlan.requested.adapterOptions.count("vendor_import_path") == 0 &&
         vendorPlan.requested.adapterOptions.count("mupti_output_path") == 0 &&
         vendorPlan.requested.adapterOptions.count("output_path") == 0) {
       // Native MUPTI launch capture defaults to a session-local artifact.
@@ -952,20 +956,35 @@ void SessionManager::finalizeAllSessions(const std::string &outputFormat) {
 
 void SessionManager::enterScope(const Scope &scope) {
   std::shared_lock<std::shared_mutex> lock(mutex);
-  for (auto iter : scopeInterfaceCounts) {
-    auto [scopeInterface, count] = iter;
-    if (count > 0) {
-      scopeInterface->enterScope(scope);
+  // Context sources must observe the scope before data sinks snapshot the
+  // current context. Pointer ordering in scopeInterfaceCounts is arbitrary.
+  for (const bool contextSourcePass : {true, false}) {
+    for (const auto &[scopeInterface, count] : scopeInterfaceCounts) {
+      if (count == 0) {
+        continue;
+      }
+      const bool isContextSource =
+          dynamic_cast<ContextSource *>(scopeInterface) != nullptr;
+      if (isContextSource == contextSourcePass) {
+        scopeInterface->enterScope(scope);
+      }
     }
   }
 }
 
 void SessionManager::exitScope(const Scope &scope) {
   std::shared_lock<std::shared_mutex> lock(mutex);
-  for (auto iter : scopeInterfaceCounts) {
-    auto [scopeInterface, count] = iter;
-    if (count > 0) {
-      scopeInterface->exitScope(scope);
+  // Let data sinks finish before the context source removes the active scope.
+  for (const bool contextSourcePass : {false, true}) {
+    for (const auto &[scopeInterface, count] : scopeInterfaceCounts) {
+      if (count == 0) {
+        continue;
+      }
+      const bool isContextSource =
+          dynamic_cast<ContextSource *>(scopeInterface) != nullptr;
+      if (isContextSource == contextSourcePass) {
+        scopeInterface->exitScope(scope);
+      }
     }
   }
 }

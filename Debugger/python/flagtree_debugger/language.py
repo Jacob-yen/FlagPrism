@@ -24,6 +24,9 @@ def debug_collect_start(semantic: Any, level: Any, addr_level: Any):
     if not isinstance(level_value, int):
         raise TypeError(
             "flagtree.language.debug_collect_start: level must be an integer")
+    if level_value not in (1, 2):
+        raise ValueError(
+            "flagtree.language.debug_collect_start: level must be 1 or 2")
     if addr_level_value is not None and not isinstance(addr_level_value, int):
         raise TypeError(
             "flagtree.language.debug_collect_start: addr_level must be an integer"

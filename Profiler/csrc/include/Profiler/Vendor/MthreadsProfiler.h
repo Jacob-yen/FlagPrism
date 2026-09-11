@@ -58,6 +58,8 @@ private:
     int32_t dynamicSharedMemory = 0;
     uint32_t localMemoryPerThread = 0;
     uint32_t localMemoryTotal = 0;
+    uint32_t activeBlocksPerSm = 0;
+    std::string occupancySource;
     bool callbackEvent = false;
   };
 
@@ -73,6 +75,8 @@ private:
   void flushMuptiCapture(bool forced);
   void stopMuptiCapture();
   void writeMuptiOutput();
+  void queryDeviceLimits();
+  void enrichNativeEvent(NativeKernelEvent &event) const;
 
   std::mutex mutex;
   std::unordered_map<size_t, uint64_t> opStartTimesNs;
@@ -80,6 +84,15 @@ private:
   std::vector<NativeKernelEvent> nativeKernelEvents;
   std::unordered_map<uint32_t, NativeKernelEvent> callbackLaunches;
   uint32_t deviceId = 0;
+  uint32_t warpSize = 0;
+  uint32_t multiprocessorCount = 0;
+  uint32_t maxThreadsPerMultiprocessor = 0;
+  uint32_t maxBlocksPerMultiprocessor = 0;
+  uint64_t registersPerMultiprocessor = 0;
+  uint64_t sharedMemoryPerMultiprocessor = 0;
+  uint64_t clockRateKhz = 0;
+  uint64_t memoryClockRateKhz = 0;
+  uint64_t memoryBusWidthBits = 0;
   std::string importPath;
   std::string nativeOutputPath;
   std::string lastNativeOutputPath;
@@ -93,6 +106,7 @@ private:
   size_t nativeBufferRequests = 0;
   size_t nativeBufferCompletions = 0;
   size_t nativeActivityRecords = 0;
+  size_t nativeInvalidActivityRecords = 0;
 };
 
 } // namespace proton

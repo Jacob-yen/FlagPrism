@@ -114,8 +114,8 @@ FlagTree Profiler supports `cupti`, `roctracer`, `instrumentation`, `cann`, and
 - **`instrumentation`**: Available on both NVIDIA and AMD GPUs, this backend enables collection of custom metrics and advanced instrumentation.
 - **`cann`**: Uses the Ascend vendor adapter and CANN runtime/import path.
 - **`mthreads`**: Uses the native MUPTI callback/activity interface. The
-  currently enabled vendor metric is `launch_stats`, which reports kernel
-  launch timing, geometry and resource fields when the SDK supplies them.
+  in-process path reports launch geometry, theoretical occupancy, static
+  resource usage and theoretical peak memory bandwidth.
 - **`tianshu`**: Reuses Debugger instrumentation through the CoreX-compatible
   driver and imports ixKN CSV output. Use the `flagtree-profiler --ixkn` CLI
   wrapper because ixKN profiles the target process from startup.
@@ -135,7 +135,8 @@ import flagtree.profiler as profiler
 profiler.start(
     name="mthreads_profile",
     backend="mthreads",
-    mode="runtime_base:vendor_metrics=launch_stats",
+    mode=("runtime_base:vendor_metrics=launch_stats,occupancy,"
+          "resource_usage,peak_memory_bandwidth"),
 )
 # launch Triton kernels
 profiler.finalize()
@@ -148,11 +149,22 @@ runtimes where the activity-buffer path is known to be stable; MUSA 4.3 can
 retain incomplete activity buffers during shutdown. An explicit
 `mupti_import_path=<csv>` remains available for import-only validation.
 
-Hardware-counter metrics such as occupancy, bandwidth and instruction counts
-are not currently enabled for mthreads. MUSA's modern profiler target API needs
-counter configuration and evaluation support (normally supplied through the
-Perfworks layer), which is not integrated in FlagPrism yet. Unsupported metric
-names are reported as degraded instead of being silently fabricated.
+`occupancy` is calculated from the real MUSA occupancy API and the device's
+maximum resident-thread limit. `resource_usage` includes registers and shared
+memory per block and their share of the per-MP limits.
+`peak_memory_bandwidth` is a device-property-derived theoretical peak; it is
+not achieved bandwidth. `estimated_cycles` is available only with a stable
+MUPTI activity stream or an imported export because callback duration is host
+API time, not kernel execution time.
+
+Replay-based `instruction_count`, `cycles`, `memory_bandwidth`,
+`sm_utilization`, and arbitrary `hardware_counters` are currently disabled.
+The retained MCU wrapper and CSV importer are not exposed through the CLI.
+Requests for these metrics produce an explicit degradation reason while the
+in-process metrics remain usable.
+
+<!-- TODO(FlagPrism): Enable and validate MCU integration when a compatible
+Moore Threads MCU, MUSA SDK, and driver test environment is available. -->
 
 #### Instruction Sampling
 

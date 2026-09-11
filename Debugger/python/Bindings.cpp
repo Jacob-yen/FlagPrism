@@ -95,15 +95,21 @@ RecordLevel parseRecordLevel(py::handle value) {
     return RecordLevel::LEVEL_SUMMARY;
   }
   if (py::isinstance<py::int_>(value)) {
-    return py::cast<uint32_t>(value) == 2 ? RecordLevel::LEVEL_TENSOR_FULL
-                                          : RecordLevel::LEVEL_SUMMARY;
+    int64_t level = py::cast<int64_t>(value);
+    if (level == 1)
+      return RecordLevel::LEVEL_SUMMARY;
+    if (level == 2)
+      return RecordLevel::LEVEL_TENSOR_FULL;
+    throw py::value_error("debugger record_level must be 1 or 2");
   }
   std::string lowered = toLower(py::cast<std::string>(py::str(value)));
   if (lowered == "level_tensor_full" || lowered == "tensor_full" ||
-      lowered == "full") {
+      lowered == "full" || lowered == "2") {
     return RecordLevel::LEVEL_TENSOR_FULL;
   }
-  return RecordLevel::LEVEL_SUMMARY;
+  if (lowered == "level_summary" || lowered == "summary" || lowered == "1")
+    return RecordLevel::LEVEL_SUMMARY;
+  throw py::value_error("debugger record_level must be 1 or 2");
 }
 
 ExportMode parseExportMode(py::handle value) {

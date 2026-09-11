@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from flagtree.debugger import native
 
 
@@ -24,3 +26,13 @@ def test_runtime_binding_uses_standalone_extension(monkeypatch):
     )
 
     assert native.runtime_binding() is runtime
+
+
+@pytest.mark.parametrize("level", [-1, 0, 3])
+def test_runtime_binding_rejects_invalid_record_level(level):
+    runtime = native.runtime_binding()
+    if runtime is None:
+        pytest.skip("flagtree-debugger native binding is unavailable")
+
+    with pytest.raises(ValueError, match="record_level must be 1 or 2"):
+        runtime.prepare_launch({"debug_record_level": level}, 0, None)

@@ -79,6 +79,17 @@ FLAGTREE_BACKEND=mthreads FLAGPRISM_BACKEND=mthreads \
 TRITON_BUILD_FLAGPRISM=ON python3 -m pip install . --no-build-isolation
 ```
 
+Run the opt-in MUSA hardware validation after building:
+
+```bash
+FLAGTREE_RUN_MTHREADS_HARDWARE_TESTS=1 \
+python -m pytest -q \
+  third_party/FlagPrism/Debugger/test/python/mthreads/test_debugger_mthreads.py
+```
+
+The test checks summary collection without addresses, masked address summaries,
+and level-2 full value and lane-address artifacts.
+
 ## Quick Start
 
 ```python

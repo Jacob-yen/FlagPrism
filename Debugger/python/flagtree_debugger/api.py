@@ -206,6 +206,13 @@ def _normalize_addr_level(addr_level: int) -> int:
     return value
 
 
+def _normalize_record_level(record_level: int) -> int:
+    value = int(record_level)
+    if value not in (1, 2):
+        raise ValueError("debugger level must be 1 or 2")
+    return value
+
+
 def _derive_kernel_id(metadata_dict: dict[str, Any]) -> int:
     kernel_hash = metadata_dict.get("hash")
     if isinstance(kernel_hash, str) and kernel_hash:
@@ -1347,6 +1354,7 @@ def activate(
     effective_level = record_level if record_level is not None else level
     if effective_level is None:
         effective_level = 1
+    effective_level = _normalize_record_level(effective_level)
     effective_addr_level = _normalize_addr_level(addr_level)
     effective_export_mode = (_export_mode if export_mode is _USE_CURRENT_CONFIG
                              else _normalize_export_mode(export_mode))
@@ -1364,7 +1372,7 @@ def activate(
 
     _active_config = DebuggerConfig(
         enabled=True,
-        record_level=int(effective_level),
+        record_level=effective_level,
         addr_level=effective_addr_level,
         export_mode=effective_export_mode,
         record_capacity=effective_record_capacity,
