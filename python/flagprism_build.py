@@ -35,10 +35,12 @@ class FlagPrismBuildConfig:
             cls,
             project_root: Path,
             source_root: Path | None = None) -> "FlagPrismBuildConfig":
-        configured_root = os.getenv("FLAGPRISM_SOURCE_DIR")
-        root = Path(configured_root) if configured_root else source_root
+        configured_root = os.getenv("FLAGPRISM_SOURCE_DIR", "").strip()
+        # The host may already have resolved the override before loading us.
+        root = source_root
         if root is None:
-            root = Path("third_party") / "FlagPrism"
+            root = (Path(configured_root)
+                    if configured_root else Path("third_party") / "FlagPrism")
         if not root.is_absolute():
             root = project_root / root
         root = root.resolve()
