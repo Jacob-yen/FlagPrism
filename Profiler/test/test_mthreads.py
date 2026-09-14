@@ -187,8 +187,8 @@ def test_compiled_importer_keeps_mcu_counter_collection_frozen(tmp_path):
 
     artifact = json.loads(base.with_suffix(".vendor.json").read_text())
     assert not [
-        item for item in artifact["associations"]
-        if item["source"] == "mcu_csv"
+        item
+        for item in artifact["associations"] if item["source"] == "mcu_csv"
     ]
     assert not set(artifact["enabled_metrics"]).intersection({
         "instruction_count",

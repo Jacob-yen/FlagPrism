@@ -101,9 +101,9 @@ DeviceType MthreadsAdapter::getDeviceType() const {
 }
 
 std::vector<std::string> MthreadsAdapter::getSupportedVendorMetrics() const {
-  std::vector<std::string> metrics = {
-      "launch_stats", "occupancy", "resource_usage", "peak_memory_bandwidth",
-      "estimated_cycles"};
+  std::vector<std::string> metrics = {"launch_stats", "occupancy",
+                                      "resource_usage", "peak_memory_bandwidth",
+                                      "estimated_cycles"};
   if (kMcuIntegrationEnabled) {
     metrics.insert(metrics.end(),
                    {"instruction_count", "cycles", "memory_bandwidth",
@@ -137,7 +137,8 @@ MthreadsAdapter::makePlan(const VendorProfileOptions &options) const {
       "hardware_counters"};
   const bool mcuRequested =
       std::any_of(requested.vendorMetrics.begin(),
-                  requested.vendorMetrics.end(), [&](const auto &request) {
+                  requested.vendorMetrics.end(),
+                  [&](const auto &request) {
                     const auto name = canonicalMetric(request.name);
                     return std::find(mcuMetrics.begin(), mcuMetrics.end(),
                                      name) != mcuMetrics.end();
@@ -150,10 +151,9 @@ MthreadsAdapter::makePlan(const VendorProfileOptions &options) const {
   }
   const auto supported = getSupportedVendorMetrics();
   const auto &adapterOptions = requested.adapterOptions;
-  const bool externalMcu =
-      kMcuIntegrationEnabled &&
-      (optionEnabled(adapterOptions, "mcu_external") ||
-       hasMcuImportPath(adapterOptions));
+  const bool externalMcu = kMcuIntegrationEnabled &&
+                           (optionEnabled(adapterOptions, "mcu_external") ||
+                            hasMcuImportPath(adapterOptions));
   const bool activityCapture =
       optionEnabled(adapterOptions, "mupti_activity") || externalMcu;
   std::vector<std::string> unsupportedMetrics;
@@ -162,10 +162,9 @@ MthreadsAdapter::makePlan(const VendorProfileOptions &options) const {
     const auto metric = canonicalMetric(request.name);
     const bool requiresMcu = std::find(mcuMetrics.begin(), mcuMetrics.end(),
                                        metric) != mcuMetrics.end();
-    const bool known =
-        std::find(supported.begin(), supported.end(), metric) !=
-            supported.end() ||
-        requiresMcu;
+    const bool known = std::find(supported.begin(), supported.end(), metric) !=
+                           supported.end() ||
+                       requiresMcu;
     const bool available = known && (!requiresMcu || externalMcu) &&
                            (metric != "estimated_cycles" || activityCapture);
     if (available) {

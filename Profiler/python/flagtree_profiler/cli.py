@@ -89,7 +89,8 @@ def parse_arguments():
             "--mcu-import-csv",
             type=str,
             default=None,
-            help="Structured MCU CSV file or directory to merge after collection",
+            help=
+            "Structured MCU CSV file or directory to merge after collection",
         )
     parser.add_argument('target_args',
                         nargs=argparse.REMAINDER,
