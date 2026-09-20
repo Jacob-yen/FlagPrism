@@ -15,8 +15,7 @@
 #endif
 #if !defined(FLAGPRISM_BACKEND_ENFLAME) &&                                     \
     !defined(FLAGPRISM_BACKEND_ASCEND) &&                                      \
-    !defined(FLAGPRISM_BACKEND_TIANSHU) &&                                     \
-    !defined(FLAGPRISM_BACKEND_NVIDIA)
+    !defined(FLAGPRISM_BACKEND_TIANSHU) && !defined(FLAGPRISM_BACKEND_NVIDIA)
 #include "Profiler/Vendor/MthreadsAdapter.h"
 #endif
 #if !defined(FLAGPRISM_BACKEND_ENFLAME) &&                                     \
@@ -88,8 +87,7 @@ std::vector<std::string> VendorAdapterRegistry::names() {
 #endif
 #if !defined(FLAGPRISM_BACKEND_ENFLAME) &&                                     \
     !defined(FLAGPRISM_BACKEND_ASCEND) &&                                      \
-    !defined(FLAGPRISM_BACKEND_TIANSHU) &&                                     \
-    !defined(FLAGPRISM_BACKEND_NVIDIA)
+    !defined(FLAGPRISM_BACKEND_TIANSHU) && !defined(FLAGPRISM_BACKEND_NVIDIA)
   result.push_back("mthreads");
 #endif
 #if !defined(FLAGPRISM_BACKEND_ENFLAME) &&                                     \
