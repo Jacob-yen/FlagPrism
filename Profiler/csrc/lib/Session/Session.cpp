@@ -299,9 +299,10 @@ makeVendorMetrics(const VendorMetricAssociation &association,
   }
   for (const auto &[name, value] : association.metrics) {
     const bool isMthreadsMetric = name.rfind("mthreads.", 0) == 0;
-    const bool isNvidiaMetric =
-        association.source.rfind("cupti_activity", 0) == 0 ||
-        association.source.rfind("nvidia_", 0) == 0;
+    // FlagPrism: every CUPTI association, including PC sampling and memory
+    // activity sources, belongs to the NVIDIA namespace.
+    const bool isNvidiaMetric = association.source.rfind("cupti_", 0) == 0 ||
+                                association.source.rfind("nvidia_", 0) == 0;
     // FlagPrism: keep vendor namespaces distinct when adapters share the
     // common artifact overlay path.
     const auto prefix =

@@ -576,7 +576,9 @@ struct CuptiProfiler::CuptiProfilerPimpl
     // FlagPrism: retain each CUPTI stall-reason bucket with a stable vendor
     // prefix. These are sampled instruction observations, not PM counter
     // values, and can be overlaid without replacing the legacy PC metric.
-    event.vendorMetrics["instruction_" + stallMetricName] = samples;
+    // FlagPrism: stall-reason buckets use stalledSamples, which preserves the
+    // not-issued bucket semantics instead of duplicating total samples.
+    event.vendorMetrics["instruction_" + stallMetricName] = stalledSamples;
 
     std::lock_guard<std::mutex> lock(vendorMutex);
     if (vendorEventCapture) {
