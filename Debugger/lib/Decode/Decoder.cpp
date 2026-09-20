@@ -365,9 +365,14 @@ bool decodeExportedRun(const DebugExportedRun &run, DecodedDebugRun &decoded,
   decoded.runtimeMetadata = run.runtimeMetadata;
 
   const uint32_t recordCount = std::min(header.writeIdx, header.capacity);
+  auto &inactiveSlots = decoded.runtimeMetadata.inactiveRecordSlots;
+  std::sort(inactiveSlots.begin(), inactiveSlots.end());
   const bool compact = isDeterministicCompactRun(run.runtimeMetadata);
   decoded.records.reserve(recordCount);
   for (uint32_t slotIndex = 0; slotIndex < recordCount; ++slotIndex) {
+    if (std::binary_search(inactiveSlots.begin(), inactiveSlots.end(),
+                           slotIndex))
+      continue;
     const size_t slotOffset =
         sizeof(RingBufferHeader) +
         static_cast<size_t>(slotIndex) * header.recordSize;

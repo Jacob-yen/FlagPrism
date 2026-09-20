@@ -11,6 +11,8 @@ import importlib.util
 import json
 import os
 
+from flagtree.debugger import language as debugger_language
+
 fd = compiler_binding()
 if fd is None:
     pytest.skip("flagtree-debugger native binding is unavailable",
@@ -52,6 +54,12 @@ def _run_pm(pm, mod):
         pm.run(mod, "test_debug_collect")
     except TypeError:
         pm.run(mod)
+
+
+@pytest.mark.parametrize("level", [-1, 0, 3])
+def test_debug_collect_start_rejects_invalid_level(level):
+    with pytest.raises(ValueError, match="level must be 1 or 2"):
+        debugger_language.debug_collect_start(object(), level, None)
 
 
 def test_statement_operation_annotation_is_component_owned():

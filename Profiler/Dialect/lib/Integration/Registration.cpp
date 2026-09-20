@@ -1,7 +1,8 @@
 #include "Integration/Registration.h"
 
 #include "Conversion/ProtonGPUToLLVM/Passes.h"
-#if !defined(FLAGPRISM_BACKEND_TIANSHU) &&                                     \
+#if !defined(FLAGPRISM_BACKEND_ENFLAME) &&                                     \
+    !defined(FLAGPRISM_BACKEND_TIANSHU) &&                                     \
     !defined(FLAGPRISM_BACKEND_ASCEND) && !defined(FLAGPRISM_BACKEND_MTHREADS) && \
     !defined(FLAGPRISM_BACKEND_NVIDIA)
 #include "Conversion/ProtonGPUToLLVM/ProtonAMDGPUToLLVM/Passes.h"
@@ -20,7 +21,8 @@ namespace mlir::triton::proton {
 
 void registerFlagTreeProtonPassesAndDialects(mlir::DialectRegistry &registry) {
   registerConvertProtonToProtonGPU();
-#if !defined(FLAGPRISM_BACKEND_TIANSHU) &&                                     \
+#if !defined(FLAGPRISM_BACKEND_ENFLAME) &&                                     \
+    !defined(FLAGPRISM_BACKEND_TIANSHU) &&                                     \
     !defined(FLAGPRISM_BACKEND_ASCEND) && !defined(FLAGPRISM_BACKEND_MTHREADS) && \
     !defined(FLAGPRISM_BACKEND_NVIDIA)
   gpu::registerConvertProtonNvidiaGPUToLLVM();
@@ -31,7 +33,8 @@ void registerFlagTreeProtonPassesAndDialects(mlir::DialectRegistry &registry) {
   gpu::registerAllocateProtonSharedMemoryPass();
   gpu::registerAllocateProtonGlobalScratchBufferPass();
   gpu::registerScheduleBufferStorePass();
-#if !defined(FLAGPRISM_BACKEND_TIANSHU) &&                                     \
+#if !defined(FLAGPRISM_BACKEND_ENFLAME) &&                                     \
+    !defined(FLAGPRISM_BACKEND_TIANSHU) &&                                     \
     !defined(FLAGPRISM_BACKEND_ASCEND) && !defined(FLAGPRISM_BACKEND_MTHREADS) && \
     !defined(FLAGPRISM_BACKEND_NVIDIA)
   gpu::registerAddSchedBarriersPass();

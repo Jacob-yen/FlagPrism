@@ -388,6 +388,17 @@ def test_enable_debug_rejects_invalid_addr_level():
         _reset_debugger_state()
 
 
+@pytest.mark.parametrize("keyword", ["level", "record_level"])
+@pytest.mark.parametrize("value", [-1, 0, 3])
+def test_enable_debug_rejects_invalid_record_level(keyword, value):
+    _reset_debugger_state()
+    try:
+        with pytest.raises(ValueError, match="level must be 1 or 2"):
+            debugger.activate(**{keyword: value})
+    finally:
+        _reset_debugger_state()
+
+
 def test_default_prepare_hook_uses_flagtree_backend(monkeypatch):
     _reset_debugger_state()
 

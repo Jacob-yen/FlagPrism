@@ -168,10 +168,28 @@ def test_finalize_preserves_data_specific_default_format(monkeypatch):
     assert calls["finalize"] == (72, "")
 
 
+def _workload_root(test_file):
+    prism = pathlib.Path(test_file).resolve().parents[2]
+    if prism.parent.name == "third_party" and (prism.parent.parent /
+                                               "python").is_dir():
+        return prism.parent.parent
+    return prism
+
+
+@pytest.mark.parametrize("submodule", [False, True])
+def test_cann_workload_root(tmp_path, submodule):
+    tree = tmp_path / "FlagTree"
+    (tree / "python").mkdir(parents=True)
+    prism = tree / "third_party" / "FlagPrism" if submodule else tmp_path / "FlagPrism"
+    test_file = prism / "Profiler" / "test" / "test_cann_smoke.py"
+    test_file.parent.mkdir(parents=True)
+    assert _workload_root(test_file) == (tree if submodule else prism)
+
+
 @pytest.fixture(scope="session")
 def real_cann_direct_run(tmp_path_factory):
     _require_real_cann_environment()
-    repo = pathlib.Path(__file__).resolve().parents[4]
+    repo = _workload_root(__file__)
     out = tmp_path_factory.mktemp("flagtree_profiler_cann_direct_real")
     profile_base = out / "profile"
     msprof_out = out / "msprof"
@@ -181,16 +199,11 @@ def real_cann_direct_run(tmp_path_factory):
     env.setdefault("FLAGTREE_PROFILER_CANN_TRITON_HOOK_LEGACY", "1")
     cmd = [
         sys.executable,
-        str(repo /
-            "third_party/FlagPrism/Profiler/scripts/cann_operator_profile_suite.py"
-            ),
-        "--workload",
+        str(pathlib.Path(__file__).with_name("cann_smoke_workload.py")),
         "--name",
         str(profile_base),
         "--vendor-output",
         str(msprof_out),
-        "--operator",
-        "triton_vector_add_fp32",
         "--device",
         env.get("FLAGTREE_PROFILER_CANN_TEST_DEVICE", "0"),
         "--iters",

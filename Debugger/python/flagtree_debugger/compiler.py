@@ -95,6 +95,8 @@ def _debug_launch_hidden_arg_enabled(metadata: dict) -> bool:
             # ABI, with CUDA driver transfers provided by TransferEngine.
             "cuda",
             "nvidia",
+            "gcu",
+            "enflame",
     }:
         return False
     # Keep the environment variable as a compatibility hook for subprocesses
@@ -167,7 +169,9 @@ def run_ttir_debug_passes_if_needed(mod, metadata: dict) -> None:
             raise RuntimeError(_DISABLED_BUILD_MESSAGE)
         return
     has_markers = fd.has_debug_collect_markers(mod)
-    auto_collect = _instrumentation_kind() == "debugger_auto"
+    auto_collect = _instrumentation_kind() in {
+        "debugger_auto", "debugger_auto_numeric"
+    }
 
     if auto_collect:
         try:
@@ -208,7 +212,8 @@ def run_ttir_debug_passes_if_needed(mod, metadata: dict) -> None:
     fd.set_debug_hidden_arg_abi_enabled(
         mod, bool(metadata["debug_launch_hidden_arg"]))
     fd.set_debug_addr_level(mod, int(metadata["debug_addr_level"]))
-    timeline_supported = _kernel_internal_timeline_supported()
+    timeline_supported = (_instrumentation_kind() == "debugger_auto"
+                          and _kernel_internal_timeline_supported())
     timeline_requested = auto_collect or bool(
         debug_config.get("debug_timeline_enabled", False))
     fd.set_debug_timeline_enabled(mod,
@@ -259,6 +264,9 @@ def run_ttir_debug_passes_if_needed(mod, metadata: dict) -> None:
         fd.get_debug_full_dump_payload_bytes_per_instance(mod))
     metadata["debug_full_dump_plan"] = json.loads(
         fd.get_debug_full_dump_plan_json(mod))
+    metadata["debug_host_summary_bundles"] = (
+        _target_backend(metadata) in {"gcu", "enflame"}
+        and metadata["debug_full_dump_payload_bytes_per_instance"] > 0)
     if metadata["debug_records_per_instance"] <= 0:
         # The user may request dynamic debugger collection, but the IR pass is
         # the source of truth for whether a hidden-arg ABI was actually added.

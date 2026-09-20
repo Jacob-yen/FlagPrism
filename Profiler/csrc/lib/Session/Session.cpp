@@ -724,7 +724,8 @@ void Session::finalize(const std::string &outputFormat) {
     auto hostFallbackCount =
         countAssociationsBySource(vendorArtifact, "runtime_base_fallback");
     auto nativeBaseCount = countAssociationsBySources(
-        vendorArtifact, {"aclprof_op_summary", "aclprof_task_time"});
+        vendorArtifact,
+        {"aclprof_op_summary", "aclprof_task_time", "topspti_activity"});
     metadata.config["vendor_runtime_metric_overlays"] =
         std::to_string(overlayCount);
     metadata.config["vendor_association_collected"] =
@@ -815,6 +816,10 @@ std::unique_ptr<Session> SessionManager::makeSession(
     if (vendorAdapter->getName() == "mthreads" &&
         !vendorPlan.enabledVendorMetrics.empty() &&
         vendorPlan.requested.adapterOptions.count("mupti_import_path") == 0 &&
+        vendorPlan.requested.adapterOptions.count("mthreads_import_path") ==
+            0 &&
+        vendorPlan.requested.adapterOptions.count("mcu_import_path") == 0 &&
+        vendorPlan.requested.adapterOptions.count("vendor_import_path") == 0 &&
         vendorPlan.requested.adapterOptions.count("mupti_output_path") == 0 &&
         vendorPlan.requested.adapterOptions.count("output_path") == 0) {
       // Native MUPTI launch capture defaults to a session-local artifact.
@@ -943,10 +948,12 @@ size_t SessionManager::addSession(const std::string &path,
     return sessionId;
   }
   auto sessionId = nextSessionId++;
+  // Failed construction (for example a rejected overlapping vendor session)
+  // must not leave a path pointing to a nonexistent session.
+  auto session = makeSession(sessionId, path, profilerName, profilerPath,
+                             contextSourceName, dataName, mode, hookName);
   sessionPaths[path] = sessionId;
-  sessions[sessionId] =
-      makeSession(sessionId, path, profilerName, profilerPath,
-                  contextSourceName, dataName, mode, hookName);
+  sessions[sessionId] = std::move(session);
   return sessionId;
 }
 
@@ -996,37 +1003,35 @@ void SessionManager::finalizeAllSessions(const std::string &outputFormat) {
 
 void SessionManager::enterScope(const Scope &scope) {
   std::shared_lock<std::shared_mutex> lock(mutex);
-  // FlagPrism: a ShadowContextSource is also a ScopeInterface.  Its stack
-  // must be updated before TreeData/TraceData snapshot the current contexts;
-  // pointer-order iteration is otherwise nondeterministic across sessions.
-  for (auto iter : scopeInterfaceCounts) {
-    auto [scopeInterface, count] = iter;
-    if (count > 0 && dynamic_cast<ContextSource *>(scopeInterface) != nullptr) {
-      scopeInterface->enterScope(scope);
-    }
-  }
-  for (auto iter : scopeInterfaceCounts) {
-    auto [scopeInterface, count] = iter;
-    if (count > 0 && dynamic_cast<ContextSource *>(scopeInterface) == nullptr) {
-      scopeInterface->enterScope(scope);
+  // Context sources must observe the scope before data sinks snapshot the
+  // current context. Pointer ordering in scopeInterfaceCounts is arbitrary.
+  for (const bool contextSourcePass : {true, false}) {
+    for (const auto &[scopeInterface, count] : scopeInterfaceCounts) {
+      if (count == 0) {
+        continue;
+      }
+      const bool isContextSource =
+          dynamic_cast<ContextSource *>(scopeInterface) != nullptr;
+      if (isContextSource == contextSourcePass) {
+        scopeInterface->enterScope(scope);
+      }
     }
   }
 }
 
 void SessionManager::exitScope(const Scope &scope) {
   std::shared_lock<std::shared_mutex> lock(mutex);
-  for (auto iter : scopeInterfaceCounts) {
-    auto [scopeInterface, count] = iter;
-    if (count > 0 && dynamic_cast<ContextSource *>(scopeInterface) == nullptr) {
-      scopeInterface->exitScope(scope);
-    }
-  }
-  // FlagPrism: pop the context source after data interfaces have observed the
-  // matching scope, mirroring enterScope's ordering above.
-  for (auto iter : scopeInterfaceCounts) {
-    auto [scopeInterface, count] = iter;
-    if (count > 0 && dynamic_cast<ContextSource *>(scopeInterface) != nullptr) {
-      scopeInterface->exitScope(scope);
+  // Let data sinks finish before the context source removes the active scope.
+  for (const bool contextSourcePass : {false, true}) {
+    for (const auto &[scopeInterface, count] : scopeInterfaceCounts) {
+      if (count == 0) {
+        continue;
+      }
+      const bool isContextSource =
+          dynamic_cast<ContextSource *>(scopeInterface) != nullptr;
+      if (isContextSource == contextSourcePass) {
+        scopeInterface->exitScope(scope);
+      }
     }
   }
 }

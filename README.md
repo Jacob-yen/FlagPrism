@@ -105,3 +105,13 @@ FlagPrism/
 
 FlagPrism is licensed under the [MIT License](LICENSE), using the same license
 as [FlagTree](https://github.com/flagos-ai/FlagTree/blob/main/LICENSE).
+
+## Unified operator tests
+
+```bash
+python3 test.py
+```
+
+Debugger and Profiler share 121 self-contained Triton operators, inputs and CPU correctness references; FlagGems is not required. The default minimum is 100 operator families (aliases and in-place/out variants merged). See [testing](docs/TESTING.md).
+
+See [Enflame backend setup and validation](docs/enflame.md) for the joint build, capture paths, and current limitations.

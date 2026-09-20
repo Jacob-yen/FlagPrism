@@ -1118,6 +1118,8 @@ def _select_backend() -> str:
         return "cann"
     elif backend in {"tianshu", "corex", "iluvatar"}:
         return "tianshu"
+    elif backend in {"gcu", "enflame", "tops"}:
+        return "enflame"
     elif backend in {"mthreads", "musa"}:
         return "mthreads"
     else:

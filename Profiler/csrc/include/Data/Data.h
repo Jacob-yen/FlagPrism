@@ -18,6 +18,8 @@ public:
       : path(path), contextSource(contextSource) {}
   virtual ~Data() = default;
 
+  const std::string &getPath() const { return path; }
+
   /// Add an op to the data.
   /// If scopeId is already present, add an op under/inside it.
   /// Otherwise obtain the current context and append opName to it if opName is

@@ -153,7 +153,7 @@ class DebugCollectRuntime:
         if metadata_dict.get("debug_full_dump_plan") is not None:
             runtime_metadata_dict.setdefault(
                 "full_dump_plan", metadata_dict["debug_full_dump_plan"])
-        if (int(metadata_dict.get("debug_record_level", 1)) == 2 and int(
+        if (int(
                 metadata_dict.get("debug_full_dump_payload_bytes_per_instance",
                                   0)) > 0
                 and metadata_dict.get("debug_full_dump_plan")):
@@ -185,7 +185,7 @@ class DebugCollectRuntime:
         ctx.handle = None
         metadata_dict = self._normalize_launch_metadata(
             self._metadata_to_dict(ctx.metadata))
-        if (int(metadata_dict.get("debug_record_level", 1)) == 2 and int(
+        if (int(
                 metadata_dict.get("debug_full_dump_payload_bytes_per_instance",
                                   0)) > 0
                 and metadata_dict.get("debug_full_dump_plan")):

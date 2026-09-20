@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.20)
 
 project(FlagTreeDebuggerRuntimeStandalone LANGUAGES CXX)
 
+option(FLAGTREE_RUN_ENFLAME_HARDWARE_TESTS "Build and run real GCU transfer tests" OFF)
+
+include(${CMAKE_CURRENT_SOURCE_DIR}/Enflame.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/CoreX.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/CUDA.cmake)
 if(NOT FLAGPRISM_BACKEND STREQUAL "tianshu")
@@ -11,7 +14,9 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/MUSA.cmake)
 
 if(NOT COMMAND flagprism_enable_debugger_runtime)
   function(flagprism_enable_debugger_runtime target)
-    if(FLAGPRISM_BACKEND STREQUAL "mthreads")
+    if(FLAGPRISM_BACKEND STREQUAL "enflame")
+      flagtree_debugger_enable_enflame(${target})
+    elseif(FLAGPRISM_BACKEND STREQUAL "mthreads")
       flagtree_debugger_enable_musa(${target})
     elseif(FLAGPRISM_BACKEND STREQUAL "tianshu")
       flagtree_debugger_enable_corex(${target})
@@ -52,6 +57,17 @@ target_include_directories(FlagTreeDebuggerRuntimeStandalone
   PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../../include
 )
+
+if(FLAGTREE_RUN_ENFLAME_HARDWARE_TESTS)
+  if(NOT FLAGPRISM_BACKEND STREQUAL "enflame")
+    message(FATAL_ERROR "Enflame hardware tests require FLAGPRISM_BACKEND=enflame")
+  endif()
+  enable_testing()
+  add_executable(FlagTreeDebuggerEnflameSmokeTest EnflameSmokeTest.cpp)
+  target_link_libraries(FlagTreeDebuggerEnflameSmokeTest PRIVATE FlagTreeDebuggerRuntimeStandalone)
+  flagtree_debugger_enable_enflame(FlagTreeDebuggerEnflameSmokeTest)
+  add_test(NAME FlagTreeDebuggerEnflameSmokeTest COMMAND FlagTreeDebuggerEnflameSmokeTest)
+endif()
 
 if(FLAGTREE_DEBUGGER_RUNTIME_BUILD_SMOKE_TEST)
   enable_testing()

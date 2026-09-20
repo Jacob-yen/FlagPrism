@@ -9,6 +9,10 @@
 #include "musa.h"
 #endif
 
+#if FLAGTREE_DEBUGGER_HAS_ENFLAME_RUNTIME
+#include "tops/tops_runtime.h"
+#endif
+
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -20,6 +24,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -32,6 +37,8 @@ namespace {
 
 const char *getDriverKindName(TransferDriverKind driverKind) {
   switch (driverKind) {
+  case TransferDriverKind::TOPS:
+    return "tops";
   case TransferDriverKind::HOST:
     return "host";
   case TransferDriverKind::CANN:
@@ -144,6 +151,79 @@ public:
 
   void synchronize(uint64_t streamHandle) override { (void)streamHandle; }
 };
+
+#if FLAGTREE_DEBUGGER_HAS_ENFLAME_RUNTIME
+class EnflameRuntimeBackendAdapter final : public RuntimeBackendAdapter {
+public:
+  TransferDriverKind driverKind() const override {
+    return TransferDriverKind::TOPS;
+  }
+  const char *name() const override { return "tops"; }
+  bool isAvailable() const override {
+    int count = 0;
+    return topsGetDeviceCount(&count) == topsSuccess && count > 0;
+  }
+  void setDevice(uint32_t deviceId) override {
+    check(topsSetDevice(static_cast<int>(deviceId)), "topsSetDevice");
+  }
+  void *allocateDevice(size_t bytes) override {
+    void *ptr = nullptr;
+    check(topsMalloc(&ptr, bytes), "topsMalloc");
+    return ptr;
+  }
+  void freeDevice(void *ptr) override {
+    if (ptr)
+      check(topsFree(ptr), "topsFree");
+  }
+  void *allocateHost(size_t bytes) override {
+    void *ptr = nullptr;
+    check(topsHostMalloc(&ptr, bytes, topsHostMallocDefault), "topsHostMalloc");
+    return ptr;
+  }
+  void freeHost(void *ptr) override {
+    if (ptr)
+      check(topsHostFree(ptr), "topsHostFree");
+  }
+  void memsetDevice(void *ptr, int value, size_t bytes,
+                    uint64_t stream) override {
+    if (stream)
+      check(topsMemsetAsync(ptr, value, bytes, toStream(stream)),
+            "topsMemsetAsync");
+    else
+      check(topsMemset(ptr, value, bytes), "topsMemset");
+  }
+  void copyHostToDevice(void *dst, const void *src, size_t bytes,
+                        uint64_t stream) override {
+    copy(dst, src, bytes, topsMemcpyHostToDevice, stream);
+  }
+  void copyDeviceToHost(void *dst, const void *src, size_t bytes,
+                        uint64_t stream) override {
+    copy(dst, src, bytes, topsMemcpyDeviceToHost, stream);
+  }
+  void synchronize(uint64_t stream) override {
+    check(topsStreamSynchronize(toStream(stream)), "topsStreamSynchronize");
+  }
+
+private:
+  static topsStream_t toStream(uint64_t stream) {
+    return reinterpret_cast<topsStream_t>(stream);
+  }
+  static void check(topsError_t result, const char *call) {
+    if (result != topsSuccess)
+      failRuntime(std::string(call) + " failed with topsError=" +
+                  std::to_string(static_cast<int>(result)) + ": " +
+                  topsGetErrorString(result));
+  }
+  static void copy(void *dst, const void *src, size_t bytes,
+                   topsMemcpyKind kind, uint64_t stream) {
+    if (stream)
+      check(topsMemcpyAsync(dst, src, bytes, kind, toStream(stream)),
+            "topsMemcpyAsync");
+    else
+      check(topsMemcpy(dst, src, bytes, kind), "topsMemcpy");
+  }
+};
+#endif
 
 class CannRuntimeBackendAdapter final : public RuntimeBackendAdapter {
 public:
@@ -1044,6 +1124,27 @@ public:
   DebugLaunchContext
   prepare(const BufferMeta &meta, const DebugBufferPlan &plan,
           const DebugRuntimeMetadata &runtimeMetadata) override {
+    // Enflame full-payload lowering elides per-record bounds masks. Enforce
+    // its precondition here too, so native callers share the Python guard.
+    if (meta.backendKind == BackendKind::ENFLAME && plan.payloadBytes) {
+      if (!runtimeMetadata.hasLaunchGrid || !runtimeMetadata.recordsPerInstance)
+        throw std::invalid_argument(
+            "Enflame full dump requires launch grid and record count");
+      uint64_t slots =
+          saturatingMul(runtimeMetadata.gridX, runtimeMetadata.gridY);
+      slots = saturatingMul(slots, runtimeMetadata.gridZ);
+      slots = saturatingMul(slots, runtimeMetadata.recordsPerInstance);
+      if (slots > plan.recordCapacity)
+        throw std::invalid_argument(
+            "Enflame full dump record capacity is insufficient");
+      const uint64_t limit = std::numeric_limits<uint32_t>::max();
+      const uint64_t recordBytes =
+          saturatingMul(plan.recordCapacity, plan.recordSize);
+      if (recordBytes > limit - sizeof(RingBufferHeader) ||
+          plan.payloadBytes > limit - sizeof(RingBufferHeader) - recordBytes)
+        throw std::invalid_argument(
+            "Enflame full dump buffer must fit 32-bit payload offsets");
+    }
     ensureAdapterReady(meta);
 
     DebugLaunchContext ctx;
@@ -1210,7 +1311,13 @@ private:
       failRuntime("cuda transfer driver requires BufferMeta.backendKind == "
                   "CUDA");
     }
+    if (options_.driverKind == TransferDriverKind::TOPS &&
+        meta.backendKind != BackendKind::ENFLAME) {
+      failRuntime(
+          "tops transfer driver requires BufferMeta.backendKind == ENFLAME");
+    }
     if (options_.driverKind == TransferDriverKind::COREX ||
+        options_.driverKind == TransferDriverKind::TOPS ||
         options_.driverKind == TransferDriverKind::CUDA ||
         options_.driverKind == TransferDriverKind::MUSA) {
       adapter_->setDevice(meta.deviceId);
@@ -1265,6 +1372,8 @@ private:
 
 TransferDriverKind resolveTransferDriverKind(BackendKind backendKind) {
   switch (backendKind) {
+  case BackendKind::ENFLAME:
+    return TransferDriverKind::TOPS;
   case BackendKind::CANN:
     return TransferDriverKind::CANN;
   case BackendKind::TIANSHU:
@@ -1291,6 +1400,12 @@ TransferEngineOptions makeTransferEngineOptions(BackendKind backendKind,
 std::unique_ptr<RuntimeBackendAdapter>
 createRuntimeBackendAdapter(const TransferEngineOptions &options) {
   switch (options.driverKind) {
+  case TransferDriverKind::TOPS:
+#if FLAGTREE_DEBUGGER_HAS_ENFLAME_RUNTIME
+    return std::make_unique<EnflameRuntimeBackendAdapter>();
+#else
+    failRuntime("TOPS runtime support is not compiled in");
+#endif
   case TransferDriverKind::HOST:
     return std::make_unique<HostRuntimeBackendAdapter>();
   case TransferDriverKind::CANN:

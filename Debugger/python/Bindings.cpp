@@ -95,15 +95,21 @@ RecordLevel parseRecordLevel(py::handle value) {
     return RecordLevel::LEVEL_SUMMARY;
   }
   if (py::isinstance<py::int_>(value)) {
-    return py::cast<uint32_t>(value) == 2 ? RecordLevel::LEVEL_TENSOR_FULL
-                                          : RecordLevel::LEVEL_SUMMARY;
+    int64_t level = py::cast<int64_t>(value);
+    if (level == 1)
+      return RecordLevel::LEVEL_SUMMARY;
+    if (level == 2)
+      return RecordLevel::LEVEL_TENSOR_FULL;
+    throw py::value_error("debugger record_level must be 1 or 2");
   }
   std::string lowered = toLower(py::cast<std::string>(py::str(value)));
   if (lowered == "level_tensor_full" || lowered == "tensor_full" ||
-      lowered == "full") {
+      lowered == "full" || lowered == "2") {
     return RecordLevel::LEVEL_TENSOR_FULL;
   }
-  return RecordLevel::LEVEL_SUMMARY;
+  if (lowered == "level_summary" || lowered == "summary" || lowered == "1")
+    return RecordLevel::LEVEL_SUMMARY;
+  throw py::value_error("debugger record_level must be 1 or 2");
 }
 
 ExportMode parseExportMode(py::handle value) {
@@ -137,6 +143,9 @@ BackendKind parseBackendKind(std::string_view backendName) {
   }
   if (lowered == "tianshu" || lowered == "corex" || lowered == "iluvatar") {
     return BackendKind::TIANSHU;
+  }
+  if (lowered == "enflame" || lowered == "gcu" || lowered == "tops") {
+    return BackendKind::ENFLAME;
   }
   return BackendKind::UNKNOWN;
 }
@@ -242,6 +251,10 @@ DebugRuntimeMetadata parseRuntimeMetadata(py::handle value) {
   runtimeMetadata.recordsPerInstance =
       getUInt32Or(dict, "records_per_instance", 0);
   runtimeMetadata.recordLayout = getStringOr(dict, "record_layout", "");
+  py::handle inactiveSlots = lookup(dict, "inactive_record_slots");
+  if (inactiveSlots && !inactiveSlots.is_none())
+    runtimeMetadata.inactiveRecordSlots =
+        py::cast<std::vector<uint32_t>>(inactiveSlots);
   py::handle recordPlan = lookup(dict, "record_plan");
   if (recordPlan && !recordPlan.is_none()) {
     for (py::handle item : py::cast<py::list>(recordPlan)) {
@@ -288,6 +301,7 @@ BufferMeta parseBufferMeta(const py::dict &dict) {
 
 py::dict toPyRuntimeMetadata(const DebugRuntimeMetadata &runtimeMetadata) {
   py::dict dict;
+  dict["inactive_record_slots"] = runtimeMetadata.inactiveRecordSlots;
 
   py::list buffers;
   for (const auto &buffer : runtimeMetadata.buffers) {
@@ -548,8 +562,7 @@ public:
         metadata, "debug_record_size", artifacts.bufferPlan.recordSize);
     uint64_t fullDumpPayloadBytesPerInstance =
         getUInt64Or(metadata, "debug_full_dump_payload_bytes_per_instance", 0);
-    if (compileRequest.options.recordLevel == RecordLevel::LEVEL_TENSOR_FULL &&
-        fullDumpPayloadBytesPerInstance != 0) {
+    if (fullDumpPayloadBytesPerInstance != 0) {
       uint64_t gridProduct = launchGridProduct(runtimeMetadata);
       uint64_t requiredRecords =
           checkedMulU64(gridProduct, runtimeMetadata.recordsPerInstance,

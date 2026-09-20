@@ -80,7 +80,13 @@ constexpr StringLiteral kAttrInstrumentationInserted =
 // kernels fail in BiShengIR with local-buffer overflow; keep those cases
 // metadata-only unless a higher collection level is explicitly requested.
 constexpr uint64_t kLevel1AuxSummaryElementLimit = 256;
+#ifdef FLAGPRISM_BACKEND_ENFLAME
+// GCU pointwise wrappers use 1024/4096-lane tiles even for small tensors.
+// Preserve load summaries so L1 captures do not become metadata-only.
+constexpr uint64_t kLevel1LoadSummaryElementLimit = 4096;
+#else
 constexpr uint64_t kLevel1LoadSummaryElementLimit = 256;
+#endif
 constexpr uint64_t kLevel1AddressSummaryElementLimit = 256;
 constexpr StringLiteral kAttrRecordIndex = "flagtree.debug.record_index";
 constexpr StringLiteral kAttrRecordsPerInstance =
@@ -432,6 +438,11 @@ bool opUsesDynamicShapedType(Operation *op) {
 
 bool isSafeEffectingDebugSource(Operation *op) {
   StringRef opName = op->getName().getStringRef();
+#ifdef FLAGPRISM_BACKEND_ENFLAME
+  // Observe the already-computed store value, without replaying the store.
+  if (opName == "tt.store")
+    return true;
+#endif
   return opName == "tt.load" || opName == "memref.load" ||
          opName == "tt.reduce" || opName == "tt.scan";
 }
@@ -675,9 +686,46 @@ bool isLevel1LargeLoadSummary(Operation *op, Type resultType,
   return elementCount > kLevel1LoadSummaryElementLimit;
 }
 
+RecordLevel getRecordLevel(Operation *op);
+
 bool shouldEmitDynamicSummary(Operation *op, Type resultType,
                               RecordLevel level) {
   StringRef opName = op->getName().getStringRef();
+#ifdef FLAGPRISM_BACKEND_ENFLAME
+  // GCU output-only kernels include constant fills and 256x256 eye tiles.
+  // Capture their stored numeric value rather than all intermediate tensors.
+  if (opName == "tt.store") {
+    // Existing load/compute observers already establish dynamic coverage.
+    // Avoid a second set of reductions over the output in those kernels:
+    // it increases register pressure on GCU300 without adding coverage.
+    bool hasOtherSummary = false;
+    if (auto func = parentFunction(op)) {
+      func.walk([&](Operation *candidate) {
+        if (hasOtherSummary ||
+            candidate->getName().getStringRef() == "tt.store" ||
+            candidate->getNumResults() == 0)
+          return;
+        auto id = getIntAttr(candidate, kAttrOpId, kAttrFallbackOpId);
+        Type type = candidate->getResult(0).getType();
+        if (id && id.getInt() != 0 && isFloatValueType(type) &&
+            isSafeDynamicDebugValue(candidate) &&
+            shouldEmitDynamicSummary(candidate, type,
+                                     getRecordLevel(candidate)))
+          hasOtherSummary = true;
+      });
+    }
+    if (hasOtherSummary)
+      return false;
+    auto constant = op->getOperand(1).getDefiningOp<arith::ConstantOp>();
+    auto dense = constant ? dyn_cast<DenseElementsAttr>(constant.getValue())
+                          : DenseElementsAttr();
+    // Constant-fill reductions fold at compile time, including the 131072
+    // lane GCU zeros tile; they do not need the dynamic reduction size limit.
+    return isFloatValueType(resultType) &&
+           (getStaticElementCount(resultType) <= 65536 ||
+            (dense && dense.isSplat()));
+  }
+#endif
   if (opName == "tt.load" || opName == "memref.load")
     return !isLevel1LargeLoadSummary(op, resultType, level);
   if (opName == "tt.dot")
@@ -1107,6 +1155,14 @@ ReservedRecordSlot reserveDeterministicRecordSlot(
       createI64Constant(builder, loc, static_cast<uint64_t>(recordIndex)));
   Value inBounds = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ult,
                                                  slotI64, ctx.capacityI64);
+#ifdef FLAGPRISM_BACKEND_ENFLAME
+  // L2 launch preparation rejects insufficient capacity and >4 GiB buffers
+  // before launching. Repeating this invariant as a mask on every payload
+  // creates huge control-flow graphs in GCU lowering (and register pressure).
+  // L1 can overflow by design and must retain the dynamic bounds check.
+  if (ctx.payloadBytesPerInstance)
+    inBounds = builder.create<arith::ConstantIntOp>(loc, 1, 1);
+#endif
 
   Value slotWords = builder.create<arith::MulIOp>(
       loc, slotI64,
@@ -1793,14 +1849,19 @@ void emitSummaryBundleStores(OpBuilder &builder, Location loc,
   // static record plan.  Only dynamic payload fields are written on device;
   // record kind, op id, logical instance id, and reserved zeros are
   // reconstructed by the host decoder from slot index.
-  storeI64(builder, loc, ctrlBytePtr, countRecordOffset, 16, nanCount,
-           countMask);
-  storeI64(builder, loc, ctrlBytePtr, countRecordOffset, 24, infCount,
-           countMask);
-  storeI64(builder, loc, ctrlBytePtr, countRecordOffset, 32, zeroCount,
-           countMask);
-  storeI64(builder, loc, ctrlBytePtr, countRecordOffset, 40, elementCount,
-           countMask);
+  auto emitCountBundle = [&]() {
+    storeI64(builder, loc, ctrlBytePtr, countRecordOffset, 16, nanCount,
+             countMask);
+    storeI64(builder, loc, ctrlBytePtr, countRecordOffset, 24, infCount,
+             countMask);
+    storeI64(builder, loc, ctrlBytePtr, countRecordOffset, 32, zeroCount,
+             countMask);
+    storeI64(builder, loc, ctrlBytePtr, countRecordOffset, 40, elementCount,
+             countMask);
+  };
+#ifndef FLAGPRISM_BACKEND_ENFLAME
+  emitCountBundle();
+#endif
 
   Value finiteCountI32 = computeFiniteCountI32(builder, loc, predicates);
   Value hasFinite = builder.create<arith::CmpIOp>(
@@ -1851,6 +1912,49 @@ void emitSummaryBundleStores(OpBuilder &builder, Location loc,
     l2Norm =
         builder.create<math::SqrtOp>(loc, reduceAddF32(builder, loc, square));
   }
+
+#ifdef FLAGPRISM_BACKEND_ENFLAME
+  // A boolean converted to float has only the values zero and one. Derive
+  // every statistic from one population count, rather than creating several
+  // float reductions and NaN/Inf predicates that GCU300 cannot always allocate.
+  // This is exact, including the norm, and does not depend on the kernel name.
+  if (auto convert = observed.getDefiningOp<arith::UIToFPOp>();
+      convert &&
+      getElementType(convert->getOperand(0).getType()).isInteger(1)) {
+    Value predicate =
+        flattenTensorForSummary(builder, loc, convert->getOperand(0));
+    Value onesI32 =
+        reduceAddI32(builder, loc, boolToI32(builder, loc, predicate));
+    Value onesI64 =
+        builder.create<arith::ExtUIOp>(loc, builder.getI64Type(), onesI32);
+    Value onesF32 =
+        builder.create<arith::UIToFPOp>(loc, builder.getF32Type(), onesI32);
+    Value zeroF32 =
+        createFloatConstantLike(builder, loc, builder.getF32Type(), 0.0);
+    Value oneF32 =
+        createFloatConstantLike(builder, loc, builder.getF32Type(), 1.0);
+    nanCount = createI64Constant(builder, loc, 0);
+    infCount = createI64Constant(builder, loc, 0);
+    zeroCount = builder.create<arith::SubIOp>(loc, elementCount, onesI64);
+    mean = builder.create<arith::DivFOp>(
+        loc, onesF32,
+        createFloatConstantLike(builder, loc, builder.getF32Type(),
+                                getStaticElementCount(observed.getType())));
+    Value allTrue = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq,
+                                                  onesI64, elementCount);
+    Value anyTrue =
+        builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, onesI32,
+                                      createI32Constant(builder, loc, 0));
+    minValue = builder.create<arith::SelectOp>(loc, allTrue, oneF32, zeroF32);
+    maxValue = builder.create<arith::SelectOp>(loc, anyTrue, oneF32, zeroF32);
+    if (collectL2Norm)
+      l2Norm = builder.create<math::SqrtOp>(loc, onesF32);
+  }
+#endif
+
+#ifdef FLAGPRISM_BACKEND_ENFLAME
+  emitCountBundle();
+#endif
 
   Value meanBits =
       builder.create<arith::BitcastOp>(loc, builder.getI32Type(), mean);
@@ -2492,6 +2596,18 @@ Value payloadLaneOffsets(OpBuilder &builder, Location loc, Type valueType,
                                            ranked.getEncoding());
   Value lanes = builder.create<triton::MakeRangeOp>(
       loc, laneI32Type, 0, static_cast<int32_t>(count));
+#ifdef FLAGPRISM_BACKEND_ENFLAME
+  // Payload offsets are uint32 bytes in the wire protocol, hence word offsets
+  // fit signed i32. Keep per-lane address arithmetic in the native GCU width.
+  Value baseI32 = builder.create<arith::TruncIOp>(loc, builder.getI32Type(),
+                                                  payloadWordOffset);
+  if (wordsPerElement != 1)
+    lanes = builder.create<arith::MulIOp>(
+        loc, lanes,
+        createIntegerConstantLike(builder, loc, laneI32Type, wordsPerElement));
+  return builder.create<arith::AddIOp>(
+      loc, builder.create<triton::SplatOp>(loc, laneI32Type, baseI32), lanes);
+#endif
   auto laneI64Type = RankedTensorType::get({count}, builder.getI64Type(),
                                            ranked.getEncoding());
   Value lanesI64 = builder.create<arith::ExtUIOp>(loc, laneI64Type, lanes);
@@ -2526,6 +2642,49 @@ void emitFullDumpPayloadStores(OpBuilder &builder, Location loc,
     return;
   uint32_t elementBytes =
       static_cast<uint32_t>(std::max<int64_t>(1, elementBytesAttr.getInt()));
+#ifdef FLAGPRISM_BACKEND_ENFLAME
+  // Keep the int64 artifact ABI, but pack narrow integers with i32 operations.
+  // In particular, GCU's i1->i64 vector conversion expands into thousands of
+  // blocks under enable_i64. Joining low/sign words avoids that conversion.
+  auto dtype = recordOp->getAttrOfType<StringAttr>(kAttrFullDumpArtifactDtype);
+  Value original =
+      recordOp->getNumOperands() ? recordOp->getOperand(0) : Value();
+  auto integer = original
+                     ? dyn_cast<IntegerType>(getElementType(original.getType()))
+                     : IntegerType();
+  if (dtype && dtype.getValue() == "int64" && integer &&
+      integer.getWidth() <= 32) {
+    Value low = flattenTensorForSummary(builder, loc, original);
+    Type i32Like = withElementType(low.getType(), builder.getI32Type());
+    if (integer.getWidth() == 1)
+      low = builder.create<arith::ExtUIOp>(loc, i32Like, low);
+    else if (integer.getWidth() < 32)
+      low = builder.create<arith::ExtSIOp>(loc, i32Like, low);
+    Value high = createIntegerConstantLike(builder, loc, i32Like, 0);
+    if (integer.getWidth() != 1)
+      high = builder.create<arith::ShRSIOp>(
+          loc, low, createIntegerConstantLike(builder, loc, i32Like, 31));
+    if (!isa<RankedTensorType>(low.getType())) {
+      auto one = RankedTensorType::get({1}, builder.getI32Type());
+      low = builder.create<triton::SplatOp>(loc, one, low);
+      high = builder.create<triton::SplatOp>(loc, one, high);
+    }
+    Value joined = builder.create<triton::JoinOp>(loc, low, high);
+    auto flatType = RankedTensorType::get(
+        {static_cast<int64_t>(getStaticElementCount(original.getType()) * 2)},
+        builder.getI32Type());
+    Value words = builder.create<triton::ReshapeOp>(loc, flatType, joined,
+                                                    /*allow_reorder=*/false,
+                                                    /*efficient_layout=*/false);
+    Value wordOffset = builder.create<arith::DivUIOp>(
+        loc, absolutePayloadOffsetBytes, createI64Constant(builder, loc, 4));
+    Value offsets = payloadLaneOffsets(builder, loc, flatType, wordOffset, 1);
+    storeValue(builder, loc,
+               addWordOffsetLike(builder, loc, ctx.ctrlBytePtr, offsets), words,
+               maskForPayloadStore(builder, loc, flatType, inBounds));
+    return;
+  }
+#endif
   Value value = canonicalizeFullDumpValue(builder, loc, recordOp);
   if (!value)
     return;
@@ -2553,6 +2712,25 @@ void emitFullDumpPayloadStores(OpBuilder &builder, Location loc,
     Value i64Value = bitcastPayloadValueToI64(builder, loc, value);
     if (!i64Value)
       return;
+#ifdef FLAGPRISM_BACKEND_ENFLAME
+    // GCU DMA handles a contiguous i64 payload directly. Splitting every
+    // element into two strided i32 stores creates expensive scatter/deslice
+    // code and exhausts registers when L2 observes many intermediate values.
+    // Full-dump plans align eight-byte elements to eight-byte boundaries.
+    auto baseType = cast<triton::PointerType>(ctx.ctrlBytePtr.getType());
+    Type payloadPointerType = triton::PointerType::get(
+        builder.getI64Type(), baseType.getAddressSpace());
+    Value payloadPointer = builder.create<triton::BitcastOp>(
+        loc, payloadPointerType, ctx.ctrlBytePtr);
+    Value elementOffset = builder.create<arith::DivUIOp>(
+        loc, absolutePayloadOffsetBytes, createI64Constant(builder, loc, 8));
+    Value offsets =
+        payloadLaneOffsets(builder, loc, i64Value.getType(), elementOffset, 1);
+    storeValue(builder, loc,
+               addWordOffsetLike(builder, loc, payloadPointer, offsets),
+               i64Value, mask);
+    return;
+#endif
     auto [low, high] = splitI64ToI32Words(builder, loc, i64Value);
     Value lowOffsets = payloadLaneOffsets(builder, loc, i64Value.getType(),
                                           payloadWordOffset, 2);
@@ -2587,10 +2765,38 @@ void emitFullValueRefStores(OpBuilder &builder, Location loc,
                         static_cast<uint64_t>(payloadOffsetAttr.getInt())));
   Value payloadOffsetI32 = builder.create<arith::TruncIOp>(
       loc, builder.getI32Type(), absolutePayloadOffsetBytes);
+#ifdef FLAGPRISM_BACKEND_ENFLAME
+  // Offset and length are adjacent words. Emit one contiguous DMA store,
+  // rather than two masked scalar stores with separate control-flow regions.
+  auto pairType = RankedTensorType::get({2}, builder.getI32Type());
+  Value lanes = builder.create<triton::MakeRangeOp>(loc, pairType, 0, 2);
+  Value offsetPair =
+      builder.create<triton::SplatOp>(loc, pairType, payloadOffsetI32);
+  Value lengths = createIntegerConstantLike(
+      builder, loc, pairType,
+      static_cast<uint32_t>(payloadLengthAttr.getInt()));
+  Value isOffset = builder.create<arith::CmpIOp>(
+      loc, arith::CmpIPredicate::eq, lanes,
+      createIntegerConstantLike(builder, loc, pairType, 0));
+  Value values =
+      builder.create<arith::SelectOp>(loc, isOffset, offsetPair, lengths);
+  Value base =
+      builder.create<arith::TruncIOp>(loc, builder.getI32Type(), recordOffset);
+  base = builder.create<arith::AddIOp>(loc, base,
+                                       createI32Constant(builder, loc, 4));
+  Value offsets = builder.create<arith::AddIOp>(
+      loc, builder.create<triton::SplatOp>(loc, pairType, base), lanes);
+  Value mask = builder.create<triton::SplatOp>(
+      loc, RankedTensorType::get({2}, builder.getI1Type()), inBounds);
+  storeValue(builder, loc,
+             addWordOffsetLike(builder, loc, ctx.ctrlBytePtr, offsets), values,
+             mask);
+#else
   storeI32Value(builder, loc, ctx.ctrlBytePtr, recordOffset, 16,
                 payloadOffsetI32, inBounds);
   storeI32(builder, loc, ctx.ctrlBytePtr, recordOffset, 20,
            static_cast<uint32_t>(payloadLengthAttr.getInt()), inBounds);
+#endif
   emitFullDumpPayloadStores(builder, loc, recordOp, ctx,
                             absolutePayloadOffsetBytes, inBounds);
 }
@@ -2647,6 +2853,16 @@ void lowerOneRecordOp(OpBuilder &builder, Operation *recordOp,
   Location loc = recordOp->getLoc();
   builder.setInsertionPoint(recordOp);
   StringRef opName = recordOp->getName().getStringRef();
+#ifdef FLAGPRISM_BACKEND_ENFLAME
+  // L2 already exports the complete observed tensor. Its summary bundles are
+  // reconstructed from that payload on the host, avoiding duplicate device
+  // reductions and their register pressure. L1 keeps device-side summaries.
+  if (opName == kRecordSummaryBundleOpName &&
+      recordOp->hasAttr("host_summary")) {
+    recordOp->erase();
+    return;
+  }
+#endif
   if (opName == kRecordSummaryBundleOpName) {
     ReservedRecordSlot countSlot =
         reserveDeterministicRecordSlot(builder, loc, recordOp, ctx);
@@ -2894,6 +3110,7 @@ struct FullDumpPlanEntry {
   uint32_t elementBytes = 0;
   uint64_t payloadOffset = 0;
   uint64_t payloadLength = 0;
+  bool conditional = false;
 };
 
 std::string serializeRecordPlanToJson(ArrayRef<RecordPlanEntry> entries) {
@@ -2987,6 +3204,7 @@ std::string serializeFullDumpPlanToJson(ArrayRef<FullDumpPlanEntry> entries) {
         {"element_bytes", static_cast<int64_t>(entry.elementBytes)},
         {"payload_offset", static_cast<int64_t>(entry.payloadOffset)},
         {"payload_length", static_cast<int64_t>(entry.payloadLength)},
+        {"conditional", entry.conditional},
     });
   }
 
@@ -3004,6 +3222,13 @@ appendFullDumpPlanEntry(llvm::SmallVectorImpl<FullDumpPlanEntry> &fullDumpPlan,
   uint64_t alignedOffset = alignTo(nextPayloadOffset, spec.elementBytes);
   uint64_t payloadLength =
       spec.elementCount * static_cast<uint64_t>(spec.elementBytes);
+  // A static slot inside a branch or a zero-trip loop need not be written.
+  // Keep this distinction in the plan: an empty unconditional slot is still
+  // a capture error, never an implicitly successful export.
+  bool conditional = false;
+  for (Operation *parent = target.op->getParentOp(); parent;
+       parent = parent->getParentOp())
+    conditional |= isa<scf::IfOp, scf::ForOp, scf::WhileOp>(parent);
   fullDumpPlan.push_back(FullDumpPlanEntry{
       recordIndex,
       target.opId,
@@ -3015,6 +3240,7 @@ appendFullDumpPlanEntry(llvm::SmallVectorImpl<FullDumpPlanEntry> &fullDumpPlan,
       spec.elementBytes,
       alignedOffset,
       payloadLength,
+      conditional,
   });
   return alignedOffset + payloadLength;
 }
@@ -3064,6 +3290,12 @@ Operation *createRecordSummaryBundleOp(OpBuilder &builder, Operation *anchor,
   state.addAttribute("record_level", builder.getI32IntegerAttr(
                                          static_cast<int32_t>(target.level)));
   state.addAttribute("collectors", target.collectors);
+  // Only a target with its own value payload can reconstruct its summary.
+  // A different L2 target in the same kernel must not suppress L1 summaries.
+#ifdef FLAGPRISM_BACKEND_ENFLAME
+  if (target.hasFullValueRef)
+    state.addAttribute("host_summary", builder.getUnitAttr());
+#endif
   state.addAttribute("result_index", builder.getI32IntegerAttr(0));
   state.addAttribute(kAttrRecordIndex, builder.getI32IntegerAttr(recordIndex));
 
@@ -3721,6 +3953,14 @@ struct InsertInstrumentationPass
         insertRecordOps(opBuilder, target, recordsPerInstance, recordPlan,
                         fullDumpPlan, payloadBytesPerInstance,
                         timelineBackend);
+      // Local entry alignment is insufficient: every program's payload base
+      // must preserve it too, including a final four-byte scalar entry.
+      uint64_t payloadAlignment = 1;
+      for (const FullDumpPlanEntry &entry : fullDumpPlan)
+        payloadAlignment = std::max(payloadAlignment,
+                                    static_cast<uint64_t>(entry.elementBytes));
+      payloadBytesPerInstance =
+          alignTo(payloadBytesPerInstance, payloadAlignment);
     }
 
     // Mark module as instrumented before annotating functions so that the

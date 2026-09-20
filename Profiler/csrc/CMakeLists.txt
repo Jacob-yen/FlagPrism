@@ -2,7 +2,13 @@ add_profiler_library(FlagTreeProfilerBindings
   Profiler.cpp
 )
 
-if(FLAGPRISM_BACKEND STREQUAL "mthreads")
+if(FLAGPRISM_BACKEND STREQUAL "enflame")
+  add_profiler_library(FlagTreeProfilerEnflame
+    lib/Profiler/Vendor/EnflameProfiler.cpp
+    lib/Profiler/Vendor/Adapter.cpp
+    lib/Profiler/Vendor/Mode.cpp
+  )
+elseif(FLAGPRISM_BACKEND STREQUAL "mthreads")
   add_profiler_library(FlagTreeProfilerMthreads
     lib/Driver/Mthreads/MthreadsApi.cpp
     lib/Profiler/Vendor/Adapter.cpp

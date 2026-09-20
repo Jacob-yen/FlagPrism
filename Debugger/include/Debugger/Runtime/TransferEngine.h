@@ -64,6 +64,7 @@ struct DebugRuntimeMetadata {
   std::vector<LaunchTensorInfo> tensors;
   std::string recordLayout;
   std::vector<DebugRecordPlanEntry> recordPlan;
+  std::vector<uint32_t> inactiveRecordSlots;
   std::vector<FullDumpArtifactInfo> fullDumpArtifacts;
   bool hasLaunchGrid = false;
   uint32_t gridX = 1;
@@ -77,9 +78,10 @@ enum class TransferDriverKind : uint16_t {
   CANN = 2,
   COREX = 3,
   MUSA = 4,
+  TOPS = 5,
   // FlagPrism: CUDA uses the NVIDIA driver API for device-backed debug
-  // buffers and stream-ordered exports.
-  CUDA = 5,
+  // buffers and stream-ordered exports. Keep TOPS's upstream value stable.
+  CUDA = 6,
 };
 
 TransferDriverKind resolveTransferDriverKind(BackendKind backendKind);

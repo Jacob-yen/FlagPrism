@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 import sysconfig
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,11 @@ def _flagprism_enabled(default: bool = True) -> bool:
                            "ON" if default else "OFF")
 
 
+def _is_editable_build() -> bool:
+    return any(command in sys.argv
+               for command in ("editable_wheel", "develop"))
+
+
 @dataclass(frozen=True)
 class FlagPrismBuildConfig:
     enabled: bool
@@ -29,10 +35,12 @@ class FlagPrismBuildConfig:
             cls,
             project_root: Path,
             source_root: Path | None = None) -> "FlagPrismBuildConfig":
-        configured_root = os.getenv("FLAGPRISM_SOURCE_DIR")
-        root = Path(configured_root) if configured_root else source_root
+        configured_root = os.getenv("FLAGPRISM_SOURCE_DIR", "").strip()
+        # The host may already have resolved the override before loading us.
+        root = source_root
         if root is None:
-            root = Path("third_party") / "FlagPrism"
+            root = (Path(configured_root)
+                    if configured_root else Path("third_party") / "FlagPrism")
         if not root.is_absolute():
             root = project_root / root
         root = root.resolve()
@@ -138,11 +146,32 @@ class FlagPrismBuildConfig:
 
         expected_native = "_native" + (sysconfig.get_config_var("EXT_SUFFIX")
                                        or ".so")
-        native_path = flagtree_root / "profiler" / expected_native
-        if not native_path.is_file():
-            raise RuntimeError(
-                f"FlagTree Profiler native module was not built: {native_path}"
-            )
+        native_modules = (
+            (
+                flagtree_root / "debugger" / expected_native,
+                self.root / "Debugger" / "python" / "flagtree_debugger" /
+                expected_native,
+            ),
+            (
+                flagtree_root / "profiler" / expected_native,
+                self.root / "Profiler" / "python" / "flagtree_profiler" /
+                expected_native,
+            ),
+        )
+        missing = [
+            str(source) for source, _ in native_modules
+            if not source.is_file()
+        ]
+        if missing:
+            raise RuntimeError("FlagPrism native modules were not built: " +
+                               ", ".join(missing))
+
+        if _is_editable_build():
+            # Editable package mappings point at the component source trees,
+            # while pip deletes build_lib after creating the editable wheel.
+            for source, destination in native_modules:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, destination)
 
     def package_dirs(self) -> tuple[tuple[str, str], ...]:
         if not self.enabled:

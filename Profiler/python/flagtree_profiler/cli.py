@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 from .profile import start, finalize, _select_backend
 from .flags import set_command_line
+from .mthreads import (DEFAULT_MCU_SECTIONS, MCU_INTEGRATION_ENABLED,
+                       merge_mcu_vendor_artifact, run_mcu_profile)
 from .tianshu import merge_ixkn_vendor_artifact, run_ixkn_profile
 
 
@@ -29,9 +31,10 @@ def parse_arguments():
                         choices=[
                             # FlagPrism: expose the NVIDIA adapter through
                             # the command-line interface as well as the API.
-                            "nvidia", "cupti", "cupti_pcsampling", "roctracer",
-                            "instrumentation", "cann", "tianshu", "corex",
-                            "iluvatar"
+                            "nvidia", "cuda", "cupti", "cupti_pcsampling",
+                            "roctracer", "instrumentation", "cann", "mthreads",
+                            "musa", "tianshu", "corex", "iluvatar", "enflame",
+                            "gcu", "tops"
                         ])
     parser.add_argument("-c",
                         "--context",
@@ -68,6 +71,30 @@ def parse_arguments():
     parser.add_argument("--ixkn-export-profile", type=str, default=None)
     parser.add_argument("--no-ixkn-csv", action="store_true")
     parser.add_argument("--ixkn-profile-child-processes", action="store_true")
+    # TODO(FlagPrism): Expose the MCU CLI after validation on a compatible
+    # Moore Threads MCU, MUSA SDK, and driver test environment.
+    if MCU_INTEGRATION_ENABLED:
+        parser.add_argument(
+            "--mcu",
+            action="store_true",
+            help="Wrap the target process with Moore Perf Compute")
+        parser.add_argument("--mcu-cli", type=str, default=None)
+        parser.add_argument("--mcu-devices", type=str, default="0")
+        parser.add_argument("--mcu-sections",
+                            type=str,
+                            default=DEFAULT_MCU_SECTIONS)
+        parser.add_argument("--mcu-metrics", type=str, default=None)
+        parser.add_argument("--mcu-kernel-name", type=str, default=None)
+        parser.add_argument("--mcu-launch-count", type=int, default=None)
+        parser.add_argument("--mcu-launch-skip", type=int, default=None)
+        parser.add_argument("--mcu-output", type=str, default=None)
+        parser.add_argument(
+            "--mcu-import-csv",
+            type=str,
+            default=None,
+            help=
+            "Structured MCU CSV file or directory to merge after collection",
+        )
     parser.add_argument('target_args',
                         nargs=argparse.REMAINDER,
                         help='Subcommand and its arguments')
@@ -121,6 +148,68 @@ def do_setup_and_execute(target_args):
 
 def run_profiling(args, target_args):
     backend = args.backend if args.backend else _select_backend()
+
+    if getattr(args, "mcu", False):
+        if not MCU_INTEGRATION_ENABLED:
+            raise RuntimeError(
+                "Moore Perf Compute integration is frozen until it can be "
+                "validated on a compatible Moore Threads environment")
+        if backend not in {"mthreads", "musa"}:
+            raise ValueError("--mcu is only valid with the mthreads backend")
+        if not target_args:
+            raise ValueError(
+                "--mcu requires a target script or pytest command")
+
+        name = args.name or "flagtree_profiler"
+        report_path = args.mcu_output or str(
+            Path(name).with_suffix(".mcu-rep"))
+        log_path = str(Path(name).with_suffix(".mcu.log"))
+        child_mode = args.mode or (
+            "runtime_base:vendor_metrics=launch_stats,occupancy,resource_usage,"
+            "peak_memory_bandwidth,instruction_count,cycles,memory_bandwidth,"
+            "sm_utilization,hardware_counters")
+        if "mcu_external=" not in child_mode:
+            child_mode += ":mcu_external=true"
+        child_command = [
+            sys.executable,
+            "-m",
+            f"{__package__}.cli",
+            "--backend",
+            "mthreads",
+            "--name",
+            name,
+            "--context",
+            args.context,
+            "--data",
+            args.data,
+            "--mode",
+            child_mode,
+        ]
+        if args.hook:
+            child_command.extend(["--hook", args.hook])
+        child_command.extend(target_args)
+        result = run_mcu_profile(
+            child_command,
+            devices=args.mcu_devices,
+            sections=args.mcu_sections,
+            metrics=args.mcu_metrics,
+            kernel_name=args.mcu_kernel_name,
+            launch_count=args.mcu_launch_count,
+            launch_skip=args.mcu_launch_skip,
+            output=report_path,
+            mcu_cli=args.mcu_cli,
+            env=os.environ.copy(),
+            log_path=log_path,
+        )
+        merge_mcu_vendor_artifact(
+            name,
+            report_path,
+            csv_import_path=args.mcu_import_csv,
+            log_path=log_path,
+        )
+        if result.returncode != 0:
+            raise SystemExit(result.returncode)
+        return
 
     if args.ixkn:
         if backend not in {"tianshu", "corex", "iluvatar"}:

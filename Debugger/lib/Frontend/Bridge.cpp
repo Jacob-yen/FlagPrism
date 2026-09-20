@@ -32,6 +32,9 @@ BackendKind resolveBackendKindName(std::string_view backendName) {
   if (lowered == "tianshu" || lowered == "corex" || lowered == "iluvatar") {
     return BackendKind::TIANSHU;
   }
+  if (lowered == "gcu" || lowered == "enflame" || lowered == "tops") {
+    return BackendKind::ENFLAME;
+  }
   return BackendKind::UNKNOWN;
 }
 

@@ -1,6 +1,8 @@
 # FlagTree Profiler 测试指南
 
-本文说明如何测试 FlagTree Profiler 的 CANN 后端。当前后端只接入昇腾 CANN。
+日常跨后端批量算子验收统一使用根目录 `test.py`，见 [统一测试说明](../../docs/TESTING.md)。以下保留组件专项测试和使用说明。
+
+本文保留 CANN 后端的专项测试说明；跨后端批量算子验收使用根目录统一入口。
 
 ## 环境准备
 
@@ -55,139 +57,21 @@ python3 -m pytest -q third_party/FlagPrism/Profiler/test/test_cann_smoke.py -s
 python3 -m pytest -q third_party/FlagPrism/Profiler/test/test_cann_smoke.py -s
 ```
 
-## 2. 统一 profiler suite
+## 2. 统一算子验收
 
-`scripts/cann_profile_test_suite.py` 是测试的唯一推荐入口。默认只运行项目内自定义的 12 个 Triton kernel，覆盖 elementwise、activation、math、memory、cast、reduction、softmax、transpose、matmul、masking。
-
-```bash
-python3 third_party/FlagPrism/Profiler/scripts/cann_profile_test_suite.py \
-  --out /tmp/flagtree_profiler_cann_tests \
-  --clean
-```
-
-如果只想跑其中一个算子：
+在 FlagPrism 根目录运行：
 
 ```bash
-python3 third_party/FlagPrism/Profiler/scripts/cann_profile_test_suite.py \
-  --out /tmp/flagtree_profiler_cann_tests_one \
-  --clean \
-  --custom-operator triton_vector_add_fp32
+python3 test.py
+python3 test.py --stages profiler
 ```
 
-输出：
+统一入口使用仓库内自带的 121 个轻量 Triton 算子，不依赖 FlagGems 或 Liger-Kernel。
+完整阶段顺序、失败补跑政策、参数及输出见 [统一测试说明](../../docs/TESTING.md)。
+CANN 的 CSV 导入、MSTX、bandwidth 和 direct-finalize 专项回归仍由 `test/test_cann_smoke.py` 保留；
+它的单算子子进程位于 `test/cann_smoke_workload.py`，不再依赖批量 runner。
 
-```text
-/tmp/flagtree_profiler_cann_tests/summary.json
-/tmp/flagtree_profiler_cann_tests/custom/summary.json
-/tmp/flagtree_profiler_cann_tests/custom/post_import.vendor.json
-/tmp/flagtree_profiler_cann_tests/custom/post_import.timeline.json
-```
-
-`summary.json` 同时包含每个算子的耗时和 profiler overhead：
-
-- `results[].baseline_elapsed_s`：未启动 FlagTree Profiler session 时，单独运行该算子的总耗时。
-- `results[].profiled_elapsed_s`：启动 `profiler.start(... backend="cann" ...)` 后，运行同一算子的总耗时。
-- `results[].overhead_s`：`profiled_elapsed_s - baseline_elapsed_s`。
-- `results[].overhead_percent`：该算子的相对 overhead。
-- `timing.average_overhead_percent`：所有成功算子的 per-operator overhead 算术平均。
-- `timing.weighted_overhead_percent`：按总耗时加权的整体 overhead，等价于 `(profiled_total_s - baseline_total_s) / baseline_total_s`。
-- `overhead_method`：overhead 统计口径。默认 driver 使用 `separate_process_no_profiler_baseline`，即先单独运行一个无 profiler baseline 进程，再运行 profiled 进程。
-
-顶层 `summary.json` 汇总每个子 suite 的状态；具体 overhead 和 CANN artifact 仍在子目录的 `summary.json` 中。专项 runner 仍保留在 `scripts/` 下，但作为统一入口内部实现，通常不直接调用。
-
-## 3. 加入 Liger-Kernel
-
-第二级测试用真实开源 Triton 算子库验证 profiler。Liger-Kernel 主要覆盖 LLM 训练/推理相关 low-level Triton kernel，规模比自定义 12 算子更接近实际库封装，但仍可控，适合作为日常扩展回归。
-
-```bash
-python3 third_party/FlagPrism/Profiler/scripts/cann_profile_test_suite.py \
-  --out /tmp/flagtree_profiler_cann_tests_liger \
-  --clean \
-  --with-liger \
-  --warmup 1 \
-  --iters 3
-```
-
-未传 `--liger-source` 时，脚本会自动 clone Liger-Kernel 到 `<out>/liger/Liger-Kernel`；已有 checkout 时可以传 `--liger-source /path/to/Liger-Kernel` 复用源码。只跑一个 Liger case 时加 `--liger-case liger_rms_norm`。
-
-Liger suite 当前覆盖 19 个已选定、可在 Ascend 环境稳定运行的 low-level Liger case。`liger/summary.json` 字段和 12 算子 suite 保持一致，也包含 overhead、CANN association sources、MSTX ranges、bandwidth association count 和 top op types。
-
-重点检查：
-
-- `ok_count` 是否等于 `case_count`。
-- `failed_count` 是否为 0。
-- `association_sources` 是否包含 `aclprof_op_summary`、`msprof_mstx`、`msprof_bandwidth`。
-- `mstx_ranges` 是否包含 `flagtree_profiler_cann_liger::...`。
-- `top_op_types` 是否出现 Liger Triton kernel 名称，例如 `_rms_norm_forward_kernel_no_tiling`。
-
-## 4. 加入 FlagGems
-
-第三级测试用 [FlagGems](https://github.com/flagos-ai/FlagGems) 的公开 Triton 算子库做评估。FlagGems 自带 Ascend backend，benchmark 文件按 PyTorch API/算子组织，覆盖点算、矩阵乘、归约、softmax、构造、索引等多类真实库算子。
-
-快速验证时只加 `--with-flaggems`，此时运行默认代表性集合：
-
-```bash
-python3 third_party/FlagPrism/Profiler/scripts/cann_profile_test_suite.py \
-  --out /tmp/flagtree_profiler_cann_tests_flaggems \
-  --clean \
-  --with-flaggems
-```
-
-跑全量 FlagGems op-level benchmark：
-
-```bash
-python3 third_party/FlagPrism/Profiler/scripts/cann_profile_test_suite.py \
-  --out /tmp/flagtree_profiler_cann_tests_flaggems_all \
-  --clean \
-  --with-flaggems \
-  --flaggems-all
-```
-
-未传 `--flaggems-source` 时，脚本会自动 clone FlagGems 到 `<out>/flaggems/FlagGems`；已有 checkout 时可以传 `--flaggems-source /path/to/FlagGems` 复用源码。只统计 op-level case、不实际运行时加 `--list-flaggems-ops --flaggems-all`。只跑一个 op 时加 `--flaggems-op add`。
-
-当前 FlagGems checkout 静态识别结果：
-
-```text
-op-level benchmark case: 645
-unique op marker: 596
-```
-
-预期 `summary.json` 中应看到：
-
-```json
-{
-  "backend": "cann",
-  "failed_count": 0,
-  "association_sources": {
-    "aclprof_op_summary": "...",
-    "msprof_bandwidth": "...",
-    "msprof_mstx": "..."
-  }
-}
-```
-
-`flaggems/summary.json` 会汇总每个 FlagGems op-level case 的 profiler overhead，字段含义和 12 算子 suite 一致：
-
-- `results[].baseline_elapsed_s`
-- `results[].profiled_elapsed_s`
-- `results[].overhead_s`
-- `results[].overhead_percent`
-- `timing.average_overhead_percent`
-- `timing.weighted_overhead_percent`
-- `overhead_method`：FlagGems suite 使用 `separate_process_no_profiler_baseline`，每个 op-level case 分别跑 baseline worker 和 profiled worker。
-
-重点检查：
-
-- 全量 FlagGems op-level benchmark 中如果出现失败，需要区分是 FlagGems/Ascend 算子兼容性问题，还是 profiler 崩溃。
-- `association_sources` 是否包含 `aclprof_op_summary`、`msprof_mstx`、`msprof_bandwidth`。
-- `mstx_ranges` 是否包含 `flagtree_profiler_cann_flaggems::...`。
-- `top_op_types` 是否出现 FlagGems kernel 名称或 CANN op 类型，例如 `add_func_kernel_rank_1`、`addmm_kernel`、`amax_kernel`。
-
-FlagGems runner 不修改、不安装 FlagGems；它只在 worker 进程中把 `<FlagGems>/src` 和仓库根目录追加到 `sys.path`。注意不要覆盖 CANN `set_env.sh` 已经设置的 `PYTHONPATH`，否则会导致 CANN Python 组件如 `tbe` 不可见。
-
-FlagGems runner 通过 `@pytest.mark.<op>` 识别算子，并把 pytest target 精确到 `benchmark/test_x.py::test_func`。同一个 marker 出现在多个 test function 中时会作为多个 op-level benchmark case 运行，避免结果互相覆盖。FlagGems benchmark 自身也会记录 kernel latency，但 profiler overhead 使用外层 wall time 统计。少量 case 下这个值会受编译缓存、shape 顺序和系统抖动影响，可能出现负数；正式数据建议增加 case 数、固定缓存状态并重复多轮。
-
-## 5. 最小 direct-finalize 手工测试
+## 3. 最小 direct-finalize 手工测试
 
 如果只想验证用户 API 是否可用，可以写一个最小 Triton workload，外层只包：
 
@@ -294,7 +178,7 @@ msprof_api_statistic
 msprof_op_statistic
 ```
 
-## 6. 结果文件怎么看
+## 4. 结果文件怎么看
 
 主要输出文件：
 
@@ -312,7 +196,7 @@ msprof_op_statistic
 - `mstx_ranges`：FlagTree Profiler scope / Triton hook 进入 CANN profiler 后导出的 range。
 - `top_op_types`：CANN op summary 中出现次数最多的 op 类型。
 
-## 7. 常见问题
+## 5. 常见问题
 
 ### `msprof` 找不到
 

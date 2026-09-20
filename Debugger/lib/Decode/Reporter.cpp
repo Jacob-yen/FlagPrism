@@ -5,6 +5,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <iomanip>
 #include <limits>
@@ -66,6 +67,8 @@ std::string toString(BackendKind value) {
     return "MUSA";
   case BackendKind::CANN:
     return "CANN";
+  case BackendKind::ENFLAME:
+    return "ENFLAME";
   case BackendKind::TIANSHU:
     return "TIANSHU";
   }
@@ -1578,6 +1581,16 @@ llvm::json::Value jsonUnsigned(uint64_t value) {
   return llvm::json::Value(std::to_string(value));
 }
 
+llvm::json::Value jsonFloating(double value) {
+  if (std::isfinite(value))
+    return value;
+  // JSON has no numeric representation for NaN or infinities. Preserve the
+  // distinction as explicit strings instead of emitting invalid bare tokens.
+  if (std::isnan(value))
+    return "NaN";
+  return std::signbit(value) ? "-Infinity" : "Infinity";
+}
+
 llvm::json::Array jsonInt64Vector(const std::vector<int64_t> &values) {
   llvm::json::Array array;
   for (int64_t value : values) {
@@ -1729,10 +1742,10 @@ llvm::json::Object jsonSummaryCell(const SummaryMetricValue *value) {
     object["value"] = jsonUnsigned(value->u64Value);
     break;
   case ResultType::F32:
-    object["value"] = static_cast<double>(value->f32Value);
+    object["value"] = jsonFloating(value->f32Value);
     break;
   case ResultType::F64:
-    object["value"] = value->f64Value;
+    object["value"] = jsonFloating(value->f64Value);
     break;
   }
   return object;

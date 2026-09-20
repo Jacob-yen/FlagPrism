@@ -54,8 +54,8 @@ endif()
 # vendor builds can validate the component without CUDA SDK packages.
 option(FLAGTREE_PROFILER_GPU_RUNTIME
        "Build the CUDA/HIP profiler runtime adapters" ON)
-if(FLAGTREE_BACKEND MATCHES "^(ascend|mthreads|tianshu)$" OR
-   FLAGPRISM_BACKEND MATCHES "^(ascend|mthreads|tianshu)$")
+if(FLAGTREE_BACKEND MATCHES "^(ascend|mthreads|tianshu|enflame)$" OR
+   FLAGPRISM_BACKEND MATCHES "^(ascend|mthreads|tianshu|enflame)$")
   set(FLAGTREE_PROFILER_GPU_RUNTIME OFF)
 endif()
 
@@ -85,6 +85,14 @@ if(FLAGTREE_PROFILER_ROCTRACER_RUNTIME)
 endif()
 if(NOT JSON_INCLUDE_DIR)
   message(FATAL_ERROR "JSON include directory not defined")
+endif()
+
+if(FLAGPRISM_BACKEND STREQUAL "enflame")
+  find_path(TOPSPTI_INCLUDE_DIR topspti_activity.h HINTS /opt/tops/extras/TOPSPTI/include REQUIRED)
+  find_path(TOPS_INCLUDE_DIR tops/tops_runtime.h HINTS /opt/tops/include REQUIRED)
+  find_library(TOPSPTI_ACTIVITY_LIBRARY topspti HINTS /opt/tops/extras/TOPSPTI/lib64 REQUIRED)
+  find_library(TOPS_LIBRARY topsrt HINTS /opt/tops/lib REQUIRED)
+  include_directories(${TOPSPTI_INCLUDE_DIR} ${TOPS_INCLUDE_DIR})
 endif()
 
 # ============ Dependencies =============
@@ -269,4 +277,8 @@ if(FLAGTREE_PROFILER_STANDALONE)
     BUILD_RPATH "$ORIGIN/../../triton/_C"
     INSTALL_RPATH "$ORIGIN/../../triton/_C"
   )
+endif()
+
+if(FLAGPRISM_BACKEND STREQUAL "enflame")
+  target_link_libraries(flagtree_profiler_native PRIVATE ${TOPSPTI_ACTIVITY_LIBRARY} ${TOPS_LIBRARY})
 endif()
