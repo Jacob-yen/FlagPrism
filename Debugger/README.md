@@ -1,5 +1,7 @@
 # FlagPrism Debugger
 
+日常跨后端批量算子验收统一使用根目录 `test.py`，见 [统一测试说明](../docs/TESTING.md)。以下保留组件专项测试和使用说明。
+
 FlagPrism Debugger 用于观察 Triton kernel 内部的数值、内存访问和 operation
 执行状态。它将编译期静态 metadata 与 device 运行期记录关联，导出 Triton
 语句级报告、IR op 级报告和 level 2 NumPy artifact，用于定位数值异常、异常

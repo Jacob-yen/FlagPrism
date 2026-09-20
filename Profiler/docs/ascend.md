@@ -270,31 +270,12 @@ python3 third_party/FlagPrism/Profiler/scripts/cann_vendor_raw_report.py \
 
 ## 测试套件
 
-Profiler 目录下提供了几类测试脚本：
+批量算子验收统一从 FlagPrism 根目录运行 `python3 test.py`，仅检查 profiler 时使用
+`python3 test.py --stages profiler`。算子实现与输入位于 `tests/operators.py`，不依赖外部算子库。
 
-- `scripts/cann_profile_test_suite.py`：统一测试入口。默认运行项目内 12 个自定义 Triton 算子；加 `--with-liger` 后运行 Liger-Kernel 真实 LLM Triton 算子库；加 `--with-flaggems` 后运行公开 Triton 算子库 FlagGems 的 benchmark。
-- `scripts/cann_operator_profile_suite.py`、`scripts/cann_liger_profile_suite.py`、`scripts/cann_flaggems_profile_suite.py`：统一入口内部调用的专项 runner，通常不需要直接使用。
-
-默认 12 算子测试：
-
-```bash
-python3 third_party/FlagPrism/Profiler/scripts/cann_profile_test_suite.py \
-  --out /tmp/flagtree_profiler_cann_tests \
-  --clean
-```
-
-加入 Liger 和 FlagGems：
-
-```bash
-python3 third_party/FlagPrism/Profiler/scripts/cann_profile_test_suite.py \
-  --out /tmp/flagtree_profiler_cann_tests_full \
-  --clean \
-  --with-liger \
-  --with-flaggems \
-  --flaggems-all
-```
-
-未传 `--liger-source` / `--flaggems-source` 时，统一入口会让对应 runner 自动 clone 到 `<out>/liger/Liger-Kernel` 或 `<out>/flaggems/FlagGems`；已有 checkout 时可以传源码路径复用。FlagGems 的 `--flaggems-all` 会运行全量 op-level case；不加时只运行默认代表性集合，适合快速验证。
+CANN 的 CSV import、MSTX、bandwidth 和 direct-finalize 回归保留在
+`Profiler/test/test_cann_smoke.py`。详见 [测试指南](testing.md) 与
+[统一算子验收](../../docs/TESTING.md)。
 
 ## 设计简述
 
@@ -434,5 +415,3 @@ profiler.finalize(sid)
 - [测试指南](testing.md)
 - [CANN minimal adapter patch](vendor_adapter_minimal_patch.md)
 - [CANN acceptance status](cann_acceptance_status.md)
-- [FlagGems full suite](cann_flaggems_suite.md)
-- [Liger-Kernel full suite](cann_liger_full_suite.md)

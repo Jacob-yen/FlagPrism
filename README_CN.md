@@ -92,3 +92,13 @@ FlagPrism/
 
 FlagPrism 使用与 [FlagTree](https://github.com/flagos-ai/FlagTree/blob/main/LICENSE)
 一致的 [MIT License](LICENSE)。
+
+## 统一测试
+
+```bash
+python3 test.py
+```
+
+Debugger 和 Profiler 共用同一批自带的 121 个 Triton 算子、输入和 CPU 正确性参考，不依赖 FlagGems，默认要求至少 100 个合并别名及原地/out 变体后的算子族。详见 [测试说明](docs/TESTING.md)。
+
+燧原后端的联合构建、采集方式与限制见 [Enflame 后端说明](docs/enflame.md)。

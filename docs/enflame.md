@@ -25,7 +25,7 @@ MAX_JOBS=24 python3 -m pip install -e . --no-build-isolation --no-deps
 FlagTree 一侧也需要配套的构建注册、GCU launcher 和编译器改动；仅更新 FlagPrism 不足以完成联合集成。
 SDK 二进制是外部构建依赖，不属于 FlagPrism 源码补丁。
 
-FlagPrism 的核心采集功能不依赖 FlagGems。
+统一验收直接运行本仓库的 Triton 算子，不需要 FlagGems。
 若另外使用带自有编译缓存的算子库（例如 FlagGems 的 `LibEntry`），其缓存键应包含
 FlagPrism instrumentation mode/config，避免复用带不同隐藏参数 ABI 的 kernel。
 这类库的缓存与算子调度修复应由对应仓库独立提供。
@@ -54,13 +54,15 @@ Runtime 分配/释放，默认流和显式流都走对应的 TOPS API。
 GCU 的大 tile 采用单独上限，常量填充的摘要归约可在编译期折叠。
 布尔值转浮点的摘要用一次真值计数精确推导全部指标，避免重复浮点归约导致寄存器分配失败。
 调试耗时不能当作原始 kernel 的性能。其他 GCU 架构尚未真机验证。
-GCU300 的地址采集仍有 64 位索引编译限制，建议数值采集使用 addr_level=0。
+GCU300 的地址采集仍有 64 位索引编译限制，统一轻量验收默认关闭地址采集。
 
 GCU300 SDK 在部分标量摘要上会产生缺失的 `fabs(float)` libcall。
 仅当确认出现该链接错误时，编译器才链接基于 IEEE 符号位清除的兼容函数，
 并在编译元数据中标记 `debug_math_compat=scalar_fabs`。其他编译错误正常报错。
 这条路径保持默认优化及完整 L2 范数摘要，不通过省略指标来规避错误。
 常规算子数值、动态记录以及正/负/零标量的 L2 范数值已有真机回归。
+测试入口检测到设备 context/Sip 异常后会阻止后续任务派发；并发中已经启动的任务仍需结束。
+完整覆盖结论以对应运行的 summary.json 为准。
 
 ## L2 完整张量采集
 
@@ -100,16 +102,20 @@ flush 会同步当前 GCU 并检查 dropped records；无效时间戳或丢失�
 没有 host timing fallback。此实现没有声明支持硬件性能计数器：必需但未支持的
 指标报错，可选指标记录 unsupported 原因。
 
-## 专项回归
-
-在联合构建环境中，从 FlagPrism 根目录运行：
+## 验收
 
 ```bash
-python3 -m pytest Debugger/test/python/runtime/test_debug_collect_runtime.py -k 'not ascend'
-python3 -m pytest Profiler/test/test_enflame.py
+cd /path/to/FlagPrism
+python3 test.py --jobs 8 --devices 0,1,2,3,4,5,6,7
 ```
 
-这些回归覆盖 payload 对齐、混合 L1/L2、动态记录和 Profiler 会话边界。
-只有 GCU300 已完成真机验证，其他芯片和完整 shape/dtype 矩阵仍需分别验证。
+同一份算子与输入依次运行 debugger_l1/debugger_l2/profiler；采集失败后补跑普通执行。
+普通执行也失败时 WARNING 放行；普通执行成功则 ERROR。最低覆盖数和完整失败语义见
+[统一测试说明](TESTING.md)。WARNING 不代表采集成功。
+
+验收使用清单中的轻量输入；不代表所有 shape、dtype 或完整模型均已验证。
 
 摘要 JSON 中有限值保持数字；非有限值使用字符串 `"NaN"`、`"Infinity"`、`"-Infinity"`，并保留类型与 display 字段，避免生成非法 JSON。
+
+历史 FlagGems 清单的测试记录仅代表当时版本；当前自带算子清单与结果见运行生成的
+`manifest.json` 和 `summary.json`，不能直接沿用旧清单的通过率。首次 L2 编译默认允许 600 秒。
