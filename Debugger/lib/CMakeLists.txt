@@ -1,4 +1,5 @@
 include(${CMAKE_CURRENT_SOURCE_DIR}/Runtime/CoreX.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/Runtime/CUDA.cmake)
 if(NOT FLAGPRISM_BACKEND STREQUAL "tianshu")
   include(${CMAKE_CURRENT_SOURCE_DIR}/Runtime/CANN.cmake)
 endif()

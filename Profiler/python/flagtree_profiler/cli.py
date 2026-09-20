@@ -27,7 +27,9 @@ def parse_arguments():
                         help="Profiling backend",
                         default=None,
                         choices=[
-                            "cupti", "cupti_pcsampling", "roctracer",
+                            # FlagPrism: expose the NVIDIA adapter through
+                            # the command-line interface as well as the API.
+                            "nvidia", "cupti", "cupti_pcsampling", "roctracer",
                             "instrumentation", "cann", "tianshu", "corex",
                             "iluvatar"
                         ])

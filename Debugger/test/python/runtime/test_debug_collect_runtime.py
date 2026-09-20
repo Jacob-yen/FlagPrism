@@ -7,6 +7,20 @@ from pathlib import Path
 from types import SimpleNamespace
 
 
+def _has_ascend_spec() -> bool:
+    try:
+        import triton
+    except ImportError:
+        return False
+    return (Path(triton.__file__).parent / "spec" / "ascend").exists()
+
+
+@pytest.mark.skipif(
+    not _has_ascend_spec(),
+    # FlagPrism: keep Ascend-specific compatibility checks out of NVIDIA-only
+    # source distributions that do not contain the Ascend spec package.
+    reason="Ascend Triton spec is not available in this backend build",
+)
 def test_debug_collect_runtime_uses_flagtree_backend_for_backend_name(
         monkeypatch):
     from flagtree.debugger.runtime import DebugCollectRuntime
@@ -251,6 +265,10 @@ def test_debugger_binding_decodes_deterministic_compact_timeline_record():
     }]
 
 
+@pytest.mark.skipif(
+    not _has_ascend_spec(),
+    reason="Ascend Triton spec is not available in this backend build",
+)
 def test_ascend_spec_compiled_kernel_keeps_core_launch_metadata_contract(
         monkeypatch):
     import triton
@@ -281,6 +299,10 @@ def test_ascend_spec_compiled_kernel_keeps_core_launch_metadata_contract(
         assert "grid" not in launch_metadata.get()
 
 
+@pytest.mark.skipif(
+    not _has_ascend_spec(),
+    reason="Ascend Triton spec is not available in this backend build",
+)
 def test_ascend_spec_jit_applies_instrumentation_mode_to_compile_options(
     monkeypatch, ):
     import triton
@@ -315,6 +337,10 @@ def test_ascend_spec_jit_applies_instrumentation_mode_to_compile_options(
         set_instrumentation_mode("")
 
 
+@pytest.mark.skipif(
+    not _has_ascend_spec(),
+    reason="Ascend Triton spec is not available in this backend build",
+)
 def test_ascend_options_hash_includes_instrumentation_mode():
     from triton.backends.ascend.compiler import NPUOptions
 

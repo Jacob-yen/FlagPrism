@@ -40,6 +40,8 @@ const char *getDriverKindName(TransferDriverKind driverKind) {
     return "corex";
   case TransferDriverKind::MUSA:
     return "musa";
+  case TransferDriverKind::CUDA:
+    return "cuda";
   }
   return "unknown";
 }
@@ -532,11 +534,20 @@ private:
 
 class CoreXRuntimeBackendAdapter final : public RuntimeBackendAdapter {
 public:
-  CoreXRuntimeBackendAdapter() { load(); }
+  // FlagPrism: NVIDIA's driver exposes the same ABI as CoreX, but the
+  // supported CUDA driver rejects the synchronous cuMemsetD8 entry point
+  // after a primary-context allocation.  Keep the shared loader while
+  // allowing CUDA to request the async entry point for the default stream.
+  explicit CoreXRuntimeBackendAdapter(bool preferAsyncMemset = false,
+                                      bool cudaDriverOnly = false)
+      : preferAsyncMemset_(preferAsyncMemset),
+        cudaDriverOnly_(cudaDriverOnly) {
+    load();
+  }
 
   ~CoreXRuntimeBackendAdapter() override {
 #if defined(__linux__)
-    releaseRetainedPrimaryContext();
+    restorePreviousContext();
     if (library_) {
       dlclose(library_);
     }
@@ -572,17 +583,28 @@ public:
 
     if (retainedPrimaryDevice_ == static_cast<int>(deviceId) &&
         retainedPrimaryContext_ != nullptr) {
+      if (!previousContextCaptured_) {
+        previousContext_ = currentContext;
+        previousContextCaptured_ = true;
+      }
       check(ctxSetCurrent_(retainedPrimaryContext_), "cuCtxSetCurrent");
       return;
     }
 
+    // FlagPrism: the transfer engine temporarily selects the requested CUDA
+    // primary context. Restore the caller's context when this engine is gone.
+    if (!previousContextCaptured_) {
+      previousContext_ = currentContext;
+      previousContextCaptured_ = true;
+    }
     void *primaryContext = nullptr;
     check(primaryCtxRetain_(&primaryContext, static_cast<int>(deviceId)),
           "cuDevicePrimaryCtxRetain");
     const Result setResult = ctxSetCurrent_(primaryContext);
     if (setResult != 0) {
       (void)primaryCtxRelease_(static_cast<int>(deviceId));
-      failRuntime("cuCtxSetCurrent failed with CoreX driver error=" +
+      failRuntime(std::string("cuCtxSetCurrent failed with ") +
+                  (cudaDriverOnly_ ? "CUDA" : "CoreX") + " driver error=" +
                   std::to_string(setResult) + " (library=" + loadedFrom_ + ")");
     }
 
@@ -652,6 +674,15 @@ public:
       return;
     }
     const uint64_t devicePtr = reinterpret_cast<uint64_t>(ptr);
+    if (preferAsyncMemset_ && memsetAsync_) {
+      check(memsetAsync_(devicePtr, static_cast<unsigned char>(value), bytes,
+                         reinterpret_cast<void *>(streamHandle)),
+            "cuMemsetD8Async");
+      if (streamHandle == 0) {
+        check(synchronize_(nullptr), "cuStreamSynchronize(default)");
+      }
+      return;
+    }
     if (streamHandle != 0 && memsetAsync_) {
       check(memsetAsync_(devicePtr, static_cast<unsigned char>(value), bytes,
                          reinterpret_cast<void *>(streamHandle)),
@@ -788,17 +819,21 @@ private:
   }
 
   void load() {
-    const char *env = std::getenv("FLAGTREE_DEBUGGER_COREX_DRIVER_LIBRARY");
+    const char *env = std::getenv(
+        cudaDriverOnly_ ? "FLAGTREE_DEBUGGER_CUDA_DRIVER_LIBRARY"
+                        : "FLAGTREE_DEBUGGER_COREX_DRIVER_LIBRARY");
     std::vector<std::string> candidates;
     if (env && *env) {
       candidates.emplace_back(env);
     }
     candidates.emplace_back("libcuda.so.1");
     candidates.emplace_back("libcuda.so");
-    candidates.emplace_back("/usr/local/corex-4.4.0/lib64/libcuda.so.1");
-    candidates.emplace_back("/usr/local/corex-4.4.0/lib64/libcuda.so");
-    candidates.emplace_back("/usr/local/corex/lib/libcuda.so.1");
-    candidates.emplace_back("/usr/local/corex/lib/libcuda.so");
+    if (!cudaDriverOnly_) {
+      candidates.emplace_back("/usr/local/corex-4.4.0/lib64/libcuda.so.1");
+      candidates.emplace_back("/usr/local/corex-4.4.0/lib64/libcuda.so");
+      candidates.emplace_back("/usr/local/corex/lib/libcuda.so.1");
+      candidates.emplace_back("/usr/local/corex/lib/libcuda.so");
+    }
 
     for (const auto &candidate : candidates) {
       library_ = dlopen(candidate.c_str(), RTLD_LOCAL | RTLD_LAZY);
@@ -847,7 +882,8 @@ private:
   }
 
   [[noreturn]] void unavailable(const char *call) const {
-    failRuntime(std::string("CoreX driver symbol unavailable: ") + call);
+    failRuntime(std::string(cudaDriverOnly_ ? "CUDA" : "CoreX") +
+                " driver symbol unavailable: " + call);
   }
 
   void require(bool present, const char *call) const {
@@ -858,9 +894,21 @@ private:
 
   void check(Result result, const char *call) const {
     if (result != 0) {
-      failRuntime(std::string(call) + " failed with CoreX driver error=" +
+      failRuntime(std::string(call) + " failed with " +
+                  (cudaDriverOnly_ ? "CUDA" : "CoreX") + " driver error=" +
                   std::to_string(result) + " (library=" + loadedFrom_ + ")");
     }
+  }
+
+  void restorePreviousContext() {
+    if (previousContextCaptured_ && ctxSetCurrent_) {
+      // FlagPrism: do not leak the adapter's temporary primary context into
+      // the caller's CUDA context stack.
+      (void)ctxSetCurrent_(previousContext_);
+    }
+    releaseRetainedPrimaryContext();
+    previousContextCaptured_ = false;
+    previousContext_ = nullptr;
   }
 
   void releaseRetainedPrimaryContext() {
@@ -881,6 +929,8 @@ private:
   CtxGetDevice ctxGetDevice_ = nullptr;
   int retainedPrimaryDevice_ = -1;
   void *retainedPrimaryContext_ = nullptr;
+  void *previousContext_ = nullptr;
+  bool previousContextCaptured_ = false;
   MemAlloc allocateDevice_ = nullptr;
   MemFree freeDevice_ = nullptr;
   HostAlloc allocateHost_ = nullptr;
@@ -896,7 +946,61 @@ private:
 #if !defined(__linux__)
   void load() {}
 #endif
+  bool preferAsyncMemset_ = false;
+  bool cudaDriverOnly_ = false;
   bool loaded_ = false;
+};
+
+// FlagPrism: NVIDIA and Tianshu expose the same CUDA driver ABI. Reuse the
+// already validated CoreX-compatible loader for NVIDIA instead of introducing
+// a second allocator/copy implementation.
+class CudaRuntimeBackendAdapter final : public RuntimeBackendAdapter {
+public:
+  TransferDriverKind driverKind() const override {
+    return TransferDriverKind::CUDA;
+  }
+
+  const char *name() const override { return "cuda"; }
+
+  bool isAvailable() const override { return delegate_.isAvailable(); }
+
+  void setDevice(uint32_t deviceId) override { delegate_.setDevice(deviceId); }
+
+  void *allocateDevice(size_t bytes) override {
+    return delegate_.allocateDevice(bytes);
+  }
+
+  void freeDevice(void *ptr) override { delegate_.freeDevice(ptr); }
+
+  void *allocateHost(size_t bytes) override {
+    return delegate_.allocateHost(bytes);
+  }
+
+  void freeHost(void *ptr) override { delegate_.freeHost(ptr); }
+
+  void memsetDevice(void *ptr, int value, size_t bytes,
+                    uint64_t streamHandle) override {
+    delegate_.memsetDevice(ptr, value, bytes, streamHandle);
+  }
+
+  void copyHostToDevice(void *deviceDst, const void *hostSrc, size_t bytes,
+                        uint64_t streamHandle) override {
+    delegate_.copyHostToDevice(deviceDst, hostSrc, bytes, streamHandle);
+  }
+
+  void copyDeviceToHost(void *hostDst, const void *deviceSrc, size_t bytes,
+                        uint64_t streamHandle) override {
+    delegate_.copyDeviceToHost(hostDst, deviceSrc, bytes, streamHandle);
+  }
+
+  void synchronize(uint64_t streamHandle) override {
+    delegate_.synchronize(streamHandle);
+  }
+
+private:
+  // FlagPrism: select CUDA's async memset behavior without duplicating the
+  // CoreX/CUDA driver symbol loader and allocation/copy implementation.
+  CoreXRuntimeBackendAdapter delegate_{true, true};
 };
 
 struct BackendTransferAllocation {
@@ -1101,7 +1205,13 @@ private:
       failRuntime("musa transfer driver requires BufferMeta.backendKind == "
                   "MUSA");
     }
+    if (options_.driverKind == TransferDriverKind::CUDA &&
+        meta.backendKind != BackendKind::CUDA) {
+      failRuntime("cuda transfer driver requires BufferMeta.backendKind == "
+                  "CUDA");
+    }
     if (options_.driverKind == TransferDriverKind::COREX ||
+        options_.driverKind == TransferDriverKind::CUDA ||
         options_.driverKind == TransferDriverKind::MUSA) {
       adapter_->setDevice(meta.deviceId);
     }
@@ -1160,9 +1270,10 @@ TransferDriverKind resolveTransferDriverKind(BackendKind backendKind) {
   case BackendKind::TIANSHU:
     return TransferDriverKind::COREX;
   case BackendKind::UNKNOWN:
-  case BackendKind::CUDA:
   case BackendKind::HIP:
     return TransferDriverKind::HOST;
+  case BackendKind::CUDA:
+    return TransferDriverKind::CUDA;
   case BackendKind::MUSA:
     return TransferDriverKind::MUSA;
   }
@@ -1188,6 +1299,8 @@ createRuntimeBackendAdapter(const TransferEngineOptions &options) {
     return std::make_unique<CoreXRuntimeBackendAdapter>();
   case TransferDriverKind::MUSA:
     return std::make_unique<MusaRuntimeBackendAdapter>();
+  case TransferDriverKind::CUDA:
+    return std::make_unique<CudaRuntimeBackendAdapter>();
   }
   failRuntime(std::string("unsupported transfer driver '") +
               getDriverKindName(options.driverKind) + "'");

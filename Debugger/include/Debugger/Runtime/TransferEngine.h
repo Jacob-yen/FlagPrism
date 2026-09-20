@@ -77,6 +77,9 @@ enum class TransferDriverKind : uint16_t {
   CANN = 2,
   COREX = 3,
   MUSA = 4,
+  // FlagPrism: CUDA uses the NVIDIA driver API for device-backed debug
+  // buffers and stream-ordered exports.
+  CUDA = 5,
 };
 
 TransferDriverKind resolveTransferDriverKind(BackendKind backendKind);
