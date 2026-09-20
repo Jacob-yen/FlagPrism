@@ -72,6 +72,7 @@ def test_module_a_A3_cuda_launcher_forwards_original_arguments(monkeypatch):
 
 
 class _HiddenArgContext:
+
     def __init__(self, value):
         self.value = value
 
@@ -84,7 +85,8 @@ class _HiddenArgContext:
 
 @pytest.mark.module_a
 @pytest.mark.module_a_a3
-def test_module_a_A3_cuda_launcher_routes_debugger_hidden_argument(monkeypatch):
+def test_module_a_A3_cuda_launcher_routes_debugger_hidden_argument(
+        monkeypatch):
     launch_module = SimpleNamespace()
     launch_module.launch = lambda *args: setattr(launch_module, "seen", args)
     monkeypatch.setattr(
@@ -103,7 +105,7 @@ def test_module_a_A3_cuda_launcher_routes_debugger_hidden_argument(monkeypatch):
         "debugger_launch_context",
         lambda *args: _HiddenArgContext(0x1234),
     )
-    launcher(1, 1, 1, object(), object(), object(), {"grid": (1, 1, 1)},
-             None, None, 99)
+    launcher(1, 1, 1, object(), object(), object(), {"grid": (1, 1, 1)}, None,
+             None, 99)
 
     assert launch_module.seen[-1] == 0x1234

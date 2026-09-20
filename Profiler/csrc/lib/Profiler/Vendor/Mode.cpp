@@ -58,8 +58,7 @@ VendorProfileOptions parseVendorProfileMode(const std::string &mode) {
     // can request it together with vendor metrics, e.g.
     // `pcsampling:vendor_metrics=launch_stats`.
     const auto normalizedToken = toLower(token);
-    if (normalizedToken == "pcsampling" ||
-        normalizedToken == "pc_sampling") {
+    if (normalizedToken == "pcsampling" || normalizedToken == "pc_sampling") {
       options.adapterOptions["pcsampling"] = "true";
       continue;
     }

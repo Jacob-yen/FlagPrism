@@ -4,8 +4,8 @@
 #include "Device.h"
 #include "Driver/GPU/CudaApi.h"
 #include "Driver/GPU/CuptiApi.h"
-#include "Profiler/Cupti/NvidiaHardwareCounters.h"
 #include "Profiler/Cupti/CuptiPCSampling.h"
+#include "Profiler/Cupti/NvidiaHardwareCounters.h"
 #include "Utility/Map.h"
 
 #include <algorithm>
@@ -148,25 +148,23 @@ bool enableCallbackForSession(CUpti_SubscriberHandle subscriber, bool enable,
   if (result == CUPTI_SUCCESS) {
     return false;
   }
-  if (tolerateInvalidParameter &&
-      result == CUPTI_ERROR_INVALID_PARAMETER) {
+  if (tolerateInvalidParameter && result == CUPTI_ERROR_INVALID_PARAMETER) {
     return true;
   }
   throw std::runtime_error(
-      "Failed to execute cuptiEnableCallback for " +
-      std::string(callbackName) + " in domain " +
-      std::to_string(static_cast<uint32_t>(domain)) + " with error " +
-      std::to_string(static_cast<uint32_t>(result)));
+      "Failed to execute cuptiEnableCallback for " + std::string(callbackName) +
+      " in domain " + std::to_string(static_cast<uint32_t>(domain)) +
+      " with error " + std::to_string(static_cast<uint32_t>(result)));
 }
 
 bool setRuntimeCallbacks(CUpti_SubscriberHandle subscriber, bool enable,
                          bool tolerateInvalidParameter) {
   bool skippedCallback = false;
 #define CALLBACK_ENABLE(id)                                                    \
-  skippedCallback =                                                            \
-      enableCallbackForSession(subscriber, enable,                             \
-                               CUPTI_CB_DOMAIN_RUNTIME_API, id, #id,           \
-                               tolerateInvalidParameter) || skippedCallback
+  skippedCallback = enableCallbackForSession(subscriber, enable,               \
+                                             CUPTI_CB_DOMAIN_RUNTIME_API, id,  \
+                                             #id, tolerateInvalidParameter) || \
+                    skippedCallback
 
   CALLBACK_ENABLE(CUPTI_RUNTIME_TRACE_CBID_cudaLaunch_v3020);
   CALLBACK_ENABLE(CUPTI_RUNTIME_TRACE_CBID_cudaLaunchKernel_v7000);
@@ -191,9 +189,9 @@ bool setDriverCallbacks(CUpti_SubscriberHandle subscriber, bool enable,
   bool skippedCallback = false;
 #define CALLBACK_ENABLE(id)                                                    \
   skippedCallback =                                                            \
-      enableCallbackForSession(subscriber, enable,                             \
-                               CUPTI_CB_DOMAIN_DRIVER_API, id, #id,            \
-                               tolerateInvalidParameter) || skippedCallback
+      enableCallbackForSession(subscriber, enable, CUPTI_CB_DOMAIN_DRIVER_API, \
+                               id, #id, tolerateInvalidParameter) ||           \
+      skippedCallback
 
   CALLBACK_ENABLE(CUPTI_DRIVER_TRACE_CBID_cuLaunch);
   CALLBACK_ENABLE(CUPTI_DRIVER_TRACE_CBID_cuLaunchGrid);
@@ -217,9 +215,9 @@ bool setGraphCallbacks(CUpti_SubscriberHandle subscriber, bool enable,
 
 #define CALLBACK_ENABLE(id)                                                    \
   skippedCallback =                                                            \
-      enableCallbackForSession(subscriber, enable,                             \
-                               CUPTI_CB_DOMAIN_RESOURCE, id, #id,              \
-                               tolerateInvalidParameter) || skippedCallback
+      enableCallbackForSession(subscriber, enable, CUPTI_CB_DOMAIN_RESOURCE,   \
+                               id, #id, tolerateInvalidParameter) ||           \
+      skippedCallback
 
   CALLBACK_ENABLE(CUPTI_CBID_RESOURCE_GRAPHNODE_CREATED);
   CALLBACK_ENABLE(CUPTI_CBID_RESOURCE_GRAPHNODE_CLONED);
@@ -295,8 +293,7 @@ struct CuptiProfiler::CuptiProfilerPimpl
     pcSamplingUnavailable = false;
   }
 
-  void setHardwareCounterMetrics(
-      const std::vector<std::string> &metricNames) {
+  void setHardwareCounterMetrics(const std::vector<std::string> &metricNames) {
     // FlagPrism: configure before start; the helper only allocates NVPW/CUPTI
     // counter images once a session has a current CUDA context.
     hardwareCounters.configure(metricNames);
@@ -333,8 +330,8 @@ struct CuptiProfiler::CuptiProfilerPimpl
       // CUPTI may already have torn down the activity stream.
     }
     recordVendorRuntimeDegradeReason(
-        "NVIDIA CUPTI PC sampling unavailable during " +
-        std::string(phase) + ": " + reason);
+        "NVIDIA CUPTI PC sampling unavailable during " + std::string(phase) +
+        ": " + reason);
   }
 
   std::vector<RuntimeTraceEventKey> takeVendorRuntimeEvents() {
@@ -419,7 +416,8 @@ struct CuptiProfiler::CuptiProfilerPimpl
         static_cast<uint64_t>(kernel->cacheConfig.config.requested);
     event.vendorMetrics["cache_config_executed"] =
         static_cast<uint64_t>(kernel->cacheConfig.config.executed);
-    event.vendorMetrics["launch_type"] = static_cast<uint64_t>(kernel->launchType);
+    event.vendorMetrics["launch_type"] =
+        static_cast<uint64_t>(kernel->launchType);
     event.vendorMetrics["shared_memory_carveout_requested"] =
         static_cast<uint64_t>(kernel->isSharedMemoryCarveoutRequested);
     event.vendorMetrics["shared_memory_carveout_requested_percent"] =
@@ -430,7 +428,8 @@ struct CuptiProfiler::CuptiProfilerPimpl
     event.vendorMetrics["graph_node_id"] =
         static_cast<uint64_t>(kernel->graphNodeId);
 #if CUPTI_API_VERSION >= 17
-    event.vendorMetrics["channel_id"] = static_cast<uint64_t>(kernel->channelID);
+    event.vendorMetrics["channel_id"] =
+        static_cast<uint64_t>(kernel->channelID);
     event.vendorMetrics["channel_type"] =
         static_cast<uint64_t>(kernel->channelType);
 #endif
@@ -476,9 +475,8 @@ struct CuptiProfiler::CuptiProfilerPimpl
   }
 
   void recordVendorMemoryActivity(CUpti_Activity *activity) {
-    if (!activity ||
-        (activity->kind != CUPTI_ACTIVITY_KIND_MEMCPY &&
-         activity->kind != CUPTI_ACTIVITY_KIND_MEMSET)) {
+    if (!activity || (activity->kind != CUPTI_ACTIVITY_KIND_MEMCPY &&
+                      activity->kind != CUPTI_ACTIVITY_KIND_MEMSET)) {
       return;
     }
 
@@ -754,7 +752,7 @@ void CuptiProfiler::CuptiProfilerPimpl::callbackFn(void *userData,
           if (!pImpl->pcSamplingOptional)
             throw;
           pImpl->disableOptionalPCSampling(callbackData->context, "start",
-                                            error.what());
+                                           error.what());
         }
       }
     } else if (callbackData->callbackSite == CUPTI_API_EXIT) {
@@ -769,7 +767,7 @@ void CuptiProfiler::CuptiProfilerPimpl::callbackFn(void *userData,
           if (!pImpl->pcSamplingOptional)
             throw;
           pImpl->disableOptionalPCSampling(callbackData->context, "stop",
-                                            error.what());
+                                           error.what());
         }
       }
       threadState.exitOp();
@@ -809,15 +807,12 @@ void CuptiProfiler::CuptiProfilerPimpl::doStart() {
     cupti::activityEnable<true>(CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL);
   }
   cupti::activityRegisterCallbacks<true>(allocBuffer, completeBuffer);
-  const bool skippedGraphCallbacks =
-      setGraphCallbacks(subscriber, /*enable=*/true,
-                        tolerateUnsupportedCallbacks);
-  const bool skippedRuntimeCallbacks =
-      setRuntimeCallbacks(subscriber, /*enable=*/true,
-                          tolerateUnsupportedCallbacks);
-  const bool skippedDriverCallbacks =
-      setDriverCallbacks(subscriber, /*enable=*/true,
-                         tolerateUnsupportedCallbacks);
+  const bool skippedGraphCallbacks = setGraphCallbacks(
+      subscriber, /*enable=*/true, tolerateUnsupportedCallbacks);
+  const bool skippedRuntimeCallbacks = setRuntimeCallbacks(
+      subscriber, /*enable=*/true, tolerateUnsupportedCallbacks);
+  const bool skippedDriverCallbacks = setDriverCallbacks(
+      subscriber, /*enable=*/true, tolerateUnsupportedCallbacks);
   if (skippedGraphCallbacks || skippedRuntimeCallbacks ||
       skippedDriverCallbacks) {
     recordVendorRuntimeDegradeReason(
@@ -926,21 +921,18 @@ void CuptiProfiler::CuptiProfilerPimpl::doStop() {
     });
     vendorMemoryActivitiesEnabled = false;
   }
-  runCleanup("graph callback disable",
-             [&]() {
-               setGraphCallbacks(subscriber, /*enable=*/false,
-                                 tolerateUnsupportedCallbacks);
-             });
-  runCleanup("runtime callback disable",
-             [&]() {
-               setRuntimeCallbacks(subscriber, /*enable=*/false,
-                                   tolerateUnsupportedCallbacks);
-             });
-  runCleanup("driver callback disable",
-             [&]() {
-               setDriverCallbacks(subscriber, /*enable=*/false,
-                                  tolerateUnsupportedCallbacks);
-             });
+  runCleanup("graph callback disable", [&]() {
+    setGraphCallbacks(subscriber, /*enable=*/false,
+                      tolerateUnsupportedCallbacks);
+  });
+  runCleanup("runtime callback disable", [&]() {
+    setRuntimeCallbacks(subscriber, /*enable=*/false,
+                        tolerateUnsupportedCallbacks);
+  });
+  runCleanup("driver callback disable", [&]() {
+    setDriverCallbacks(subscriber, /*enable=*/false,
+                       tolerateUnsupportedCallbacks);
+  });
   runCleanup("CUPTI unsubscribe",
              [&]() { cupti::unsubscribe<true>(subscriber); });
   runCleanup("CUPTI finalize", [&]() { cupti::finalize<true>(); });
@@ -954,43 +946,38 @@ CuptiProfiler::~CuptiProfiler() = default;
 
 void CuptiProfiler::enableVendorEventCapture(bool enabled,
                                              bool captureMemoryActivities) {
-  auto *implementation =
-      dynamic_cast<CuptiProfilerPimpl *>(this->pImpl.get());
+  auto *implementation = dynamic_cast<CuptiProfilerPimpl *>(this->pImpl.get());
   implementation->setVendorEventCapture(enabled, captureMemoryActivities);
 }
 
 void CuptiProfiler::setPCSamplingOptional(bool optional) {
-  auto *implementation =
-      dynamic_cast<CuptiProfilerPimpl *>(this->pImpl.get());
+  auto *implementation = dynamic_cast<CuptiProfilerPimpl *>(this->pImpl.get());
   implementation->setPCSamplingOptional(optional);
 }
 
 void CuptiProfiler::setHardwareCounterMetrics(
     const std::vector<std::string> &metricNames) {
-  auto *implementation =
-      dynamic_cast<CuptiProfilerPimpl *>(this->pImpl.get());
+  auto *implementation = dynamic_cast<CuptiProfilerPimpl *>(this->pImpl.get());
   implementation->setHardwareCounterMetrics(metricNames);
 }
 
-void CuptiProfiler::recordVendorPCSampling(
-    size_t scopeId, const std::string &opName,
-    const std::string &stallMetricName, uint64_t samples,
-    uint64_t stalledSamples) {
-  auto *implementation =
-      dynamic_cast<CuptiProfilerPimpl *>(this->pImpl.get());
+void CuptiProfiler::recordVendorPCSampling(size_t scopeId,
+                                           const std::string &opName,
+                                           const std::string &stallMetricName,
+                                           uint64_t samples,
+                                           uint64_t stalledSamples) {
+  auto *implementation = dynamic_cast<CuptiProfilerPimpl *>(this->pImpl.get());
   implementation->recordVendorPCSampling(scopeId, opName, stallMetricName,
-                                          samples, stalledSamples);
+                                         samples, stalledSamples);
 }
 
 std::vector<std::string> CuptiProfiler::takeVendorRuntimeDegradeReasons() {
-  auto *implementation =
-      dynamic_cast<CuptiProfilerPimpl *>(this->pImpl.get());
+  auto *implementation = dynamic_cast<CuptiProfilerPimpl *>(this->pImpl.get());
   return implementation->takeVendorRuntimeDegradeReasons();
 }
 
 std::vector<RuntimeTraceEventKey> CuptiProfiler::takeVendorRuntimeEvents() {
-  auto *implementation =
-      dynamic_cast<CuptiProfilerPimpl *>(this->pImpl.get());
+  auto *implementation = dynamic_cast<CuptiProfilerPimpl *>(this->pImpl.get());
   return implementation->takeVendorRuntimeEvents();
 }
 

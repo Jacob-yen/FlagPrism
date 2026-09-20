@@ -57,7 +57,7 @@ InstrumentationProfiler::setMode(const std::vector<std::string> &mode) {
   } else
 #endif
 #if FLAGTREE_PROFILER_ROCTRACER_RUNTIME
-  if (toLower(mode[0]) == toLower(DeviceTraits<DeviceType::HIP>::name)) {
+      if (toLower(mode[0]) == toLower(DeviceTraits<DeviceType::HIP>::name)) {
     runtime = std::make_unique<HipRuntime>();
   } else
 #endif

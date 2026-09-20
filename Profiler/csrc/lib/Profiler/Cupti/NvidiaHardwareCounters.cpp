@@ -78,8 +78,8 @@ void NvidiaHardwareCounters::appendDegrade(
   }
 }
 
-void NvidiaHardwareCounters::start(
-    CUcontext context, std::vector<std::string> &degradeReasons) {
+void NvidiaHardwareCounters::start(CUcontext context,
+                                   std::vector<std::string> &degradeReasons) {
   {
     std::lock_guard<std::mutex> lock(mutex_);
     active_ = false;
@@ -125,7 +125,8 @@ void NvidiaHardwareCounters::start(
       throw std::runtime_error(
           "CUPTI returned an empty counter-availability image");
     }
-    counterAvailability_.resize(availabilityParams.counterAvailabilityImageSize);
+    counterAvailability_.resize(
+        availabilityParams.counterAvailabilityImageSize);
     availabilityParams.pCounterAvailabilityImage = counterAvailability_.data();
     cupti::profilerGetCounterAvailability<true>(&availabilityParams);
 
@@ -136,11 +137,12 @@ void NvidiaHardwareCounters::start(
     // Build the raw metric dependency list from the derived NVPW metric.  The
     // dependency names are copied before the evaluator is destroyed because
     // NVPW owns the returned strings.
-    NVPW_CUDA_MetricsEvaluator_CalculateScratchBufferSize_Params evaluatorSize =
-        {NVPW_CUDA_MetricsEvaluator_CalculateScratchBufferSize_Params_STRUCT_SIZE};
+    NVPW_CUDA_MetricsEvaluator_CalculateScratchBufferSize_Params evaluatorSize = {
+        NVPW_CUDA_MetricsEvaluator_CalculateScratchBufferSize_Params_STRUCT_SIZE};
     evaluatorSize.pChipName = chipName_.c_str();
     evaluatorSize.pCounterAvailabilityImage = counterAvailability_.data();
-    nvperf::cudaMetricsEvaluatorCalculateScratchBufferSize<true>(&evaluatorSize);
+    nvperf::cudaMetricsEvaluatorCalculateScratchBufferSize<true>(
+        &evaluatorSize);
     std::vector<uint8_t> evaluatorScratch(evaluatorSize.scratchBufferSize);
     NVPW_CUDA_MetricsEvaluator_Initialize_Params evaluatorInitialize = {
         NVPW_CUDA_MetricsEvaluator_Initialize_Params_STRUCT_SIZE};
@@ -154,9 +156,9 @@ void NvidiaHardwareCounters::start(
       throw std::runtime_error("NVPW returned a null metrics evaluator");
     }
 
-      std::vector<NVPA_RawMetricRequest> rawMetricRequests;
-      std::vector<NVPW_MetricEvalRequest> metricEvalRequests;
-      std::vector<std::string> rawMetricNames;
+    std::vector<NVPA_RawMetricRequest> rawMetricRequests;
+    std::vector<NVPW_MetricEvalRequest> metricEvalRequests;
+    std::vector<std::string> rawMetricNames;
     try {
       metricEvalRequests.reserve(metrics_.size());
       for (const auto &metric : metrics_) {
@@ -184,13 +186,15 @@ void NvidiaHardwareCounters::start(
             sizeof(NVPW_MetricEvalRequest);
         nvperf::metricsEvaluatorGetMetricRawDependencies<true>(
             &dependencyParams);
-        std::vector<const char *> dependencies(dependencyParams.numRawDependencies);
+        std::vector<const char *> dependencies(
+            dependencyParams.numRawDependencies);
         dependencyParams.ppRawDependencies = dependencies.data();
-        nvperf::metricsEvaluatorGetMetricRawDependencies<true>(&dependencyParams);
+        nvperf::metricsEvaluatorGetMetricRawDependencies<true>(
+            &dependencyParams);
         for (const auto *dependency : dependencies) {
           if (dependency &&
-              std::find(rawMetricNames.begin(), rawMetricNames.end(), dependency) ==
-                  rawMetricNames.end()) {
+              std::find(rawMetricNames.begin(), rawMetricNames.end(),
+                        dependency) == rawMetricNames.end()) {
             rawMetricNames.emplace_back(dependency);
           }
         }
@@ -285,7 +289,8 @@ void NvidiaHardwareCounters::start(
         getPrefix.pCounterDataBuilder = counterDataBuilder;
         nvperf::counterDataBuilderGetCounterDataPrefix<true>(&getPrefix);
         if (getPrefix.bytesCopied == 0) {
-          throw std::runtime_error("NVPW generated an empty counter-data prefix");
+          throw std::runtime_error(
+              "NVPW generated an empty counter-data prefix");
         }
         counterDataPrefix_.resize(getPrefix.bytesCopied);
         getPrefix.bytesAllocated = counterDataPrefix_.size();
@@ -347,7 +352,8 @@ void NvidiaHardwareCounters::start(
     calculateScratch.pCounterDataImage = counterDataImage_.data();
     cupti::profilerCounterDataImageCalculateScratchBufferSize<true>(
         &calculateScratch);
-    counterDataScratchBuffer_.resize(calculateScratch.counterDataScratchBufferSize);
+    counterDataScratchBuffer_.resize(
+        calculateScratch.counterDataScratchBufferSize);
     CUpti_Profiler_CounterDataImage_InitializeScratchBuffer_Params
         initializeScratch = {
             CUpti_Profiler_CounterDataImage_InitializeScratchBuffer_Params_STRUCT_SIZE};
@@ -365,7 +371,8 @@ void NvidiaHardwareCounters::start(
     beginSession.ctx = context_;
     beginSession.counterDataImageSize = counterDataImage_.size();
     beginSession.pCounterDataImage = counterDataImage_.data();
-    beginSession.counterDataScratchBufferSize = counterDataScratchBuffer_.size();
+    beginSession.counterDataScratchBufferSize =
+        counterDataScratchBuffer_.size();
     beginSession.pCounterDataScratchBuffer = counterDataScratchBuffer_.data();
     beginSession.range = CUPTI_AutoRange;
     beginSession.replayMode = CUPTI_KernelReplay;
@@ -464,8 +471,8 @@ void NvidiaHardwareCounters::evaluate(
     return;
   }
 
-  NVPW_CUDA_MetricsEvaluator_CalculateScratchBufferSize_Params evaluatorSize =
-      {NVPW_CUDA_MetricsEvaluator_CalculateScratchBufferSize_Params_STRUCT_SIZE};
+  NVPW_CUDA_MetricsEvaluator_CalculateScratchBufferSize_Params evaluatorSize = {
+      NVPW_CUDA_MetricsEvaluator_CalculateScratchBufferSize_Params_STRUCT_SIZE};
   evaluatorSize.pChipName = chipName_.c_str();
   evaluatorSize.pCounterAvailabilityImage = counterAvailability_.data();
   nvperf::cudaMetricsEvaluatorCalculateScratchBufferSize<true>(&evaluatorSize);
@@ -481,7 +488,8 @@ void NvidiaHardwareCounters::evaluate(
   nvperf::cudaMetricsEvaluatorInitialize<true>(&evaluatorInitialize);
   auto *metricsEvaluator = evaluatorInitialize.pMetricsEvaluator;
   if (!metricsEvaluator) {
-    throw std::runtime_error("NVPW returned a null evaluation metrics evaluator");
+    throw std::runtime_error(
+        "NVPW returned a null evaluation metrics evaluator");
   }
 
   try {
@@ -489,13 +497,14 @@ void NvidiaHardwareCounters::evaluate(
     requests.reserve(metrics_.size());
     for (const auto &metric : metrics_) {
       NVPW_MetricEvalRequest request{};
-      NVPW_MetricsEvaluator_ConvertMetricNameToMetricEvalRequest_Params convert =
-          {NVPW_MetricsEvaluator_ConvertMetricNameToMetricEvalRequest_Params_STRUCT_SIZE};
+      NVPW_MetricsEvaluator_ConvertMetricNameToMetricEvalRequest_Params convert = {
+          NVPW_MetricsEvaluator_ConvertMetricNameToMetricEvalRequest_Params_STRUCT_SIZE};
       convert.pMetricsEvaluator = metricsEvaluator;
       convert.pMetricName = metric.evaluatorName.c_str();
       convert.pMetricEvalRequest = &request;
       convert.metricEvalRequestStructSize = NVPW_MetricEvalRequest_STRUCT_SIZE;
-      nvperf::metricsEvaluatorConvertMetricNameToMetricEvalRequest<true>(&convert);
+      nvperf::metricsEvaluatorConvertMetricNameToMetricEvalRequest<true>(
+          &convert);
       requests.push_back(request);
     }
 
@@ -546,8 +555,10 @@ void NvidiaHardwareCounters::evaluate(
       evaluateParams.pMetricsEvaluator = metricsEvaluator;
       evaluateParams.pMetricEvalRequests = requests.data();
       evaluateParams.numMetricEvalRequests = requests.size();
-      evaluateParams.metricEvalRequestStructSize = NVPW_MetricEvalRequest_STRUCT_SIZE;
-      evaluateParams.metricEvalRequestStrideSize = sizeof(NVPW_MetricEvalRequest);
+      evaluateParams.metricEvalRequestStructSize =
+          NVPW_MetricEvalRequest_STRUCT_SIZE;
+      evaluateParams.metricEvalRequestStrideSize =
+          sizeof(NVPW_MetricEvalRequest);
       evaluateParams.pCounterDataImage = counterDataImage_.data();
       evaluateParams.counterDataImageSize = counterDataImage_.size();
       evaluateParams.rangeIndex = rangeIndex;
@@ -567,7 +578,8 @@ void NvidiaHardwareCounters::evaluate(
       event.vendorMetrics["hardware_range_index"] =
           static_cast<uint64_t>(rangeIndex);
       event.vendorMetrics["hardware_range_name"] = rangeName;
-      for (size_t metricIndex = 0; metricIndex < metrics_.size(); ++metricIndex) {
+      for (size_t metricIndex = 0; metricIndex < metrics_.size();
+           ++metricIndex) {
         event.vendorMetrics[metrics_[metricIndex].canonicalName] =
             values[metricIndex];
         if (metrics_[metricIndex].canonicalName == "occupancy") {
@@ -600,22 +612,20 @@ void NvidiaHardwareCounters::evaluate(
   nvperf::metricsEvaluatorDestroy<true>(&destroyEvaluator);
 }
 
-void NvidiaHardwareCounters::cleanup(
-    std::vector<std::string> *degradeReasons) {
+void NvidiaHardwareCounters::cleanup(std::vector<std::string> *degradeReasons) {
   const auto cleanupOne = [&](const char *phase, const auto &function) {
     try {
       function();
     } catch (const std::exception &error) {
       if (degradeReasons) {
-        appendDegrade(*degradeReasons,
-                      "NVIDIA NVPW cleanup failed during " +
-                          std::string(phase) + ": " + error.what());
+        appendDegrade(*degradeReasons, "NVIDIA NVPW cleanup failed during " +
+                                           std::string(phase) + ": " +
+                                           error.what());
       }
     } catch (...) {
       if (degradeReasons) {
-        appendDegrade(*degradeReasons,
-                      "NVIDIA NVPW cleanup failed during " +
-                          std::string(phase));
+        appendDegrade(*degradeReasons, "NVIDIA NVPW cleanup failed during " +
+                                           std::string(phase));
       }
     }
   };
@@ -637,26 +647,23 @@ void NvidiaHardwareCounters::cleanup(
     CUpti_Profiler_UnsetConfig_Params unsetConfig = {
         CUpti_Profiler_UnsetConfig_Params_STRUCT_SIZE};
     unsetConfig.ctx = context_;
-    cleanupOne("unset config", [&]() {
-      cupti::profilerUnsetConfig<true>(&unsetConfig);
-    });
+    cleanupOne("unset config",
+               [&]() { cupti::profilerUnsetConfig<true>(&unsetConfig); });
     configSet_ = false;
   }
   if (sessionBegun_) {
     CUpti_Profiler_EndSession_Params endSession = {
         CUpti_Profiler_EndSession_Params_STRUCT_SIZE};
     endSession.ctx = context_;
-    cleanupOne("end session", [&]() {
-      cupti::profilerEndSession<true>(&endSession);
-    });
+    cleanupOne("end session",
+               [&]() { cupti::profilerEndSession<true>(&endSession); });
     sessionBegun_ = false;
   }
   if (profilerInitialized_) {
     CUpti_Profiler_DeInitialize_Params deinitialize = {
         CUpti_Profiler_DeInitialize_Params_STRUCT_SIZE};
-    cleanupOne("deinitialize profiler", [&]() {
-      cupti::profilerDeInitialize<true>(&deinitialize);
-    });
+    cleanupOne("deinitialize profiler",
+               [&]() { cupti::profilerDeInitialize<true>(&deinitialize); });
     profilerInitialized_ = false;
   }
 }
@@ -678,9 +685,8 @@ void NvidiaHardwareCounters::stop(
     try {
       cupti::profilerDisableProfiling<true>(&disableProfiling);
     } catch (const std::exception &error) {
-      appendDegrade(degradeReasons,
-                    "NVIDIA NVPW disable profiling failed: " +
-                        std::string(error.what()));
+      appendDegrade(degradeReasons, "NVIDIA NVPW disable profiling failed: " +
+                                        std::string(error.what()));
     }
     profilingEnabled_ = false;
   }
@@ -696,9 +702,10 @@ void NvidiaHardwareCounters::stop(
                     "NVIDIA NVPW hardware-counter evaluation unavailable: " +
                         std::string(error.what()));
     } catch (...) {
-      appendDegrade(degradeReasons,
-                    "NVIDIA NVPW hardware-counter evaluation unavailable: unknown "
-                    "Perfworks/CUPTI error");
+      appendDegrade(
+          degradeReasons,
+          "NVIDIA NVPW hardware-counter evaluation unavailable: unknown "
+          "Perfworks/CUPTI error");
     }
   }
   cleanup(&degradeReasons);

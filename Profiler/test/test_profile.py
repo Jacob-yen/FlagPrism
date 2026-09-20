@@ -444,7 +444,9 @@ def test_trace(tmp_path: pathlib.Path):
     temp_file = tmp_path / "test_trace.chrome_trace"
     # This test validates the legacy trace writer. Keep it independent of the
     # NVIDIA vendor-artifact overlay selected by automatic backend discovery.
-    profiler.start(str(temp_file.with_suffix("")), data="trace", backend="cupti")
+    profiler.start(str(temp_file.with_suffix("")),
+                   data="trace",
+                   backend="cupti")
 
     @triton.jit
     def foo(x, y, size: tl.constexpr):
@@ -465,12 +467,11 @@ def test_trace(tmp_path: pathlib.Path):
         trace_events = data["traceEvents"]
         # CUDA runtime versions may emit more than one initialization kernel;
         # assert the semantic trace contract instead of a fixed event count.
-        foo_events = [event for event in trace_events
-                      if event.get("name") == "foo"]
-        assert len(foo_events) == 1
-        assert foo_events[0]["args"]["call_stack"] == [
-            "ROOT", "test", "foo"
+        foo_events = [
+            event for event in trace_events if event.get("name") == "foo"
         ]
+        assert len(foo_events) == 1
+        assert foo_events[0]["args"]["call_stack"] == ["ROOT", "test", "foo"]
 
 
 def test_scope_multiple_threads(tmp_path: pathlib.Path):

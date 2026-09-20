@@ -32,8 +32,7 @@ bool optionEnabled(const std::map<std::string, std::string> &options,
     return false;
   }
   const auto value = toLower(trim(it->second));
-  return value == "1" || value == "true" || value == "on" ||
-         value == "yes";
+  return value == "1" || value == "true" || value == "on" || value == "yes";
 }
 
 } // namespace
@@ -63,20 +62,20 @@ NvidiaMetricsImporter::import(const SessionProfileMetadata &metadata,
   // importer converts the retained activity keys into vendor associations,
   // keeping launch_stats and kernel_duration usable by the common artifact
   // and correlation pipeline without requiring a second profiler process.
-  for (const auto &event : CuptiProfiler::instance().takeVendorRuntimeEvents()) {
+  for (const auto &event :
+       CuptiProfiler::instance().takeVendorRuntimeEvents()) {
     const auto activityKindIt = event.vendorMetrics.find("activity_kind");
     const auto *activityKind =
         activityKindIt == event.vendorMetrics.end()
             ? nullptr
             : std::get_if<std::string>(&activityKindIt->second);
-    const bool isMemoryActivity =
-        activityKind && (*activityKind == "memcpy" || *activityKind == "memset");
+    const bool isMemoryActivity = activityKind && (*activityKind == "memcpy" ||
+                                                   *activityKind == "memset");
     const bool isPCSamplingActivity =
         activityKind && *activityKind == "pcsampling";
     const bool isHardwareCounterActivity =
         activityKind && *activityKind == "hardware_counter";
-    const bool isKernelActivity = !isMemoryActivity &&
-                                  !isPCSamplingActivity &&
+    const bool isKernelActivity = !isMemoryActivity && !isPCSamplingActivity &&
                                   !isHardwareCounterActivity;
     const bool wantsKernelActivity =
         contains(plan.enabledVendorMetrics, "launch_stats") ||
@@ -98,30 +97,26 @@ NvidiaMetricsImporter::import(const SessionProfileMetadata &metadata,
     VendorMetricAssociation association;
     association.runtimeEvent = event;
     association.state = VendorMetricState::Collected;
-    association.source = isMemoryActivity
-                             ? "cupti_activity_memory"
-                             : isPCSamplingActivity
-                                 ? "cupti_pc_sampling"
-                                 : isHardwareCounterActivity
-                                     ? "nvidia_nvpw_hardware_counter"
-                                     : "cupti_activity";
-    association.note = isMemoryActivity
-                           ? "Collected from NVIDIA CUPTI memcpy/memset "
-                             "activity records; memory_bytes and the derived "
-                             "transfer rate are not DRAM hardware counters."
-                           : isPCSamplingActivity
-                                 ? "Collected from NVIDIA CUPTI PC sampling; "
-                                   "instruction_samples and stall buckets are "
-                                   "sampling observations, not PM counters."
-                                 : isHardwareCounterActivity
-                                     ? "Collected from NVIDIA NVPW/Perfworks "
-                                       "range profiling; values are evaluated "
-                                       "PM-counter metrics for the AutoRange "
-                                       "kernel."
-                                     : "Collected from NVIDIA CUPTI kernel "
-                                       "activity records; launch_stats is one "
-                                       "activity record, not a hardware "
-                                       "counter.";
+    association.source = isMemoryActivity       ? "cupti_activity_memory"
+                         : isPCSamplingActivity ? "cupti_pc_sampling"
+                         : isHardwareCounterActivity
+                             ? "nvidia_nvpw_hardware_counter"
+                             : "cupti_activity";
+    association.note =
+        isMemoryActivity       ? "Collected from NVIDIA CUPTI memcpy/memset "
+                                 "activity records; memory_bytes and the derived "
+                                 "transfer rate are not DRAM hardware counters."
+        : isPCSamplingActivity ? "Collected from NVIDIA CUPTI PC sampling; "
+                                 "instruction_samples and stall buckets are "
+                                 "sampling observations, not PM counters."
+        : isHardwareCounterActivity ? "Collected from NVIDIA NVPW/Perfworks "
+                                      "range profiling; values are evaluated "
+                                      "PM-counter metrics for the AutoRange "
+                                      "kernel."
+                                    : "Collected from NVIDIA CUPTI kernel "
+                                      "activity records; launch_stats is one "
+                                      "activity record, not a hardware "
+                                      "counter.";
     if (event.scopeId == 0) {
       association.note +=
           " A synthetic scope is used because CUPTI reported a graph or "
@@ -198,8 +193,8 @@ std::vector<std::string> NvidiaAdapter::getSupportedVendorMetrics() const {
   // transfer activity (bytes/timestamps), and `instruction` is CUPTI PC
   // sampling; the four hardware metrics are evaluated through the NVIDIA
   // range-profiler API.
-  return {"launch_stats", "kernel_duration", "memory", "instruction",
-          "occupancy", "throughput", "bandwidth", "instruction_count"};
+  return {"launch_stats", "kernel_duration", "memory",    "instruction",
+          "occupancy",    "throughput",      "bandwidth", "instruction_count"};
 }
 
 VendorProfilePlan
@@ -307,8 +302,8 @@ NvidiaAdapter::makePlan(const VendorProfileOptions &options) const {
   return plan;
 }
 
-void NvidiaAdapter::configureRuntimeProfiler(
-    const std::string &profilerPath, bool captureVendorEvents) const {
+void NvidiaAdapter::configureRuntimeProfiler(const std::string &profilerPath,
+                                             bool captureVendorEvents) const {
   // FlagPrism: the legacy cupti path is configured by Session before the
   // adapter starts the shared singleton. Preserve that behavior for packaged
   // wheels whose CUPTI library is not on the system loader path.

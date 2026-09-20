@@ -31,9 +31,9 @@ def test_exec(mode, tmp_path: pathlib.Path):
     temp_file = tmp_path / "test_exec.hatchet"
     name = str(temp_file.with_suffix(""))
     if mode == "script":
-        subprocess.check_call(
-            _profiler_command() + ["-n", name, helper_file, "test"],
-            stdout=subprocess.DEVNULL)
+        subprocess.check_call(_profiler_command() +
+                              ["-n", name, helper_file, "test"],
+                              stdout=subprocess.DEVNULL)
     elif mode == "python":
         subprocess.check_call([
             "python3", "-m", "flagtree.profiler.cli", "-n", name, helper_file,
@@ -41,10 +41,10 @@ def test_exec(mode, tmp_path: pathlib.Path):
         ],
                               stdout=subprocess.DEVNULL)
     elif mode == "pytest":
-        subprocess.check_call(_profiler_command() + [
-            "-n", name, "pytest", "-k", "test_main", helper_file
-        ],
-                              stdout=subprocess.DEVNULL)
+        subprocess.check_call(
+            _profiler_command() +
+            ["-n", name, "pytest", "-k", "test_main", helper_file],
+            stdout=subprocess.DEVNULL)
     with temp_file.open() as f:
         data = json.load(f, )
     kernels = data[0]["children"]

@@ -110,11 +110,11 @@ DEFINE_DISPATCH(ExternLibCupti, pcSamplingStart, cuptiPCSamplingStart,
 DEFINE_DISPATCH(ExternLibCupti, pcSamplingStop, cuptiPCSamplingStop,
                 CUpti_PCSamplingStopParams *);
 
-DEFINE_DISPATCH(ExternLibCupti, profilerInitialize,
-                cuptiProfilerInitialize, CUpti_Profiler_Initialize_Params *);
+DEFINE_DISPATCH(ExternLibCupti, profilerInitialize, cuptiProfilerInitialize,
+                CUpti_Profiler_Initialize_Params *);
 
-DEFINE_DISPATCH(ExternLibCupti, profilerDeInitialize,
-                cuptiProfilerDeInitialize, CUpti_Profiler_DeInitialize_Params *);
+DEFINE_DISPATCH(ExternLibCupti, profilerDeInitialize, cuptiProfilerDeInitialize,
+                CUpti_Profiler_DeInitialize_Params *);
 
 DEFINE_DISPATCH(ExternLibCupti, deviceGetChipName, cuptiDeviceGetChipName,
                 CUpti_Device_GetChipName_Params *);
@@ -131,15 +131,15 @@ DEFINE_DISPATCH(ExternLibCupti, profilerCounterDataImageInitialize,
                 cuptiProfilerCounterDataImageInitialize,
                 CUpti_Profiler_CounterDataImage_Initialize_Params *);
 
-DEFINE_DISPATCH(ExternLibCupti,
-                profilerCounterDataImageCalculateScratchBufferSize,
-                cuptiProfilerCounterDataImageCalculateScratchBufferSize,
-                CUpti_Profiler_CounterDataImage_CalculateScratchBufferSize_Params *);
+DEFINE_DISPATCH(
+    ExternLibCupti, profilerCounterDataImageCalculateScratchBufferSize,
+    cuptiProfilerCounterDataImageCalculateScratchBufferSize,
+    CUpti_Profiler_CounterDataImage_CalculateScratchBufferSize_Params *);
 
-DEFINE_DISPATCH(ExternLibCupti,
-                profilerCounterDataImageInitializeScratchBuffer,
-                cuptiProfilerCounterDataImageInitializeScratchBuffer,
-                CUpti_Profiler_CounterDataImage_InitializeScratchBuffer_Params *);
+DEFINE_DISPATCH(
+    ExternLibCupti, profilerCounterDataImageInitializeScratchBuffer,
+    cuptiProfilerCounterDataImageInitializeScratchBuffer,
+    CUpti_Profiler_CounterDataImage_InitializeScratchBuffer_Params *);
 
 DEFINE_DISPATCH(ExternLibCupti, profilerBeginSession, cuptiProfilerBeginSession,
                 CUpti_Profiler_BeginSession_Params *);
@@ -180,7 +180,8 @@ void *ExternLibNvperfHost::lib = nullptr;
 DEFINE_DISPATCH(ExternLibNvperfHost, initializeHost, NVPW_InitializeHost,
                 NVPW_InitializeHost_Params *);
 
-DEFINE_DISPATCH(ExternLibNvperfHost, cudaMetricsEvaluatorCalculateScratchBufferSize,
+DEFINE_DISPATCH(ExternLibNvperfHost,
+                cudaMetricsEvaluatorCalculateScratchBufferSize,
                 NVPW_CUDA_MetricsEvaluator_CalculateScratchBufferSize,
                 NVPW_CUDA_MetricsEvaluator_CalculateScratchBufferSize_Params *);
 
@@ -192,10 +193,10 @@ DEFINE_DISPATCH(ExternLibNvperfHost, metricsEvaluatorDestroy,
                 NVPW_MetricsEvaluator_Destroy,
                 NVPW_MetricsEvaluator_Destroy_Params *);
 
-DEFINE_DISPATCH(ExternLibNvperfHost,
-                metricsEvaluatorConvertMetricNameToMetricEvalRequest,
-                NVPW_MetricsEvaluator_ConvertMetricNameToMetricEvalRequest,
-                NVPW_MetricsEvaluator_ConvertMetricNameToMetricEvalRequest_Params *);
+DEFINE_DISPATCH(
+    ExternLibNvperfHost, metricsEvaluatorConvertMetricNameToMetricEvalRequest,
+    NVPW_MetricsEvaluator_ConvertMetricNameToMetricEvalRequest,
+    NVPW_MetricsEvaluator_ConvertMetricNameToMetricEvalRequest_Params *);
 
 DEFINE_DISPATCH(ExternLibNvperfHost, metricsEvaluatorGetMetricRawDependencies,
                 NVPW_MetricsEvaluator_GetMetricRawDependencies,
@@ -257,7 +258,9 @@ DEFINE_DISPATCH(ExternLibNvperfHost, counterDataBuilderDestroy,
                 NVPW_CounterDataBuilder_Destroy,
                 NVPW_CounterDataBuilder_Destroy_Params *);
 
-void setLibPath(const std::string &path) { ExternLibNvperfHost::defaultDir = path; }
+void setLibPath(const std::string &path) {
+  ExternLibNvperfHost::defaultDir = path;
+}
 
 } // namespace nvperf
 

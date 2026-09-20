@@ -158,16 +158,16 @@ template <bool CheckSuccess>
 CUptiResult profilerUnsetConfig(CUpti_Profiler_UnsetConfig_Params *pParams);
 
 template <bool CheckSuccess>
-CUptiResult profilerEnableProfiling(
-    CUpti_Profiler_EnableProfiling_Params *pParams);
+CUptiResult
+profilerEnableProfiling(CUpti_Profiler_EnableProfiling_Params *pParams);
 
 template <bool CheckSuccess>
-CUptiResult profilerDisableProfiling(
-    CUpti_Profiler_DisableProfiling_Params *pParams);
+CUptiResult
+profilerDisableProfiling(CUpti_Profiler_DisableProfiling_Params *pParams);
 
 template <bool CheckSuccess>
-CUptiResult profilerFlushCounterData(
-    CUpti_Profiler_FlushCounterData_Params *pParams);
+CUptiResult
+profilerFlushCounterData(CUpti_Profiler_FlushCounterData_Params *pParams);
 
 // FlagPrism: NVPW host/target calls are also dispatched rather than linked
 // directly.  This avoids coupling the profiler extension to one CUDA toolkit
@@ -186,7 +186,8 @@ NVPA_Status cudaMetricsEvaluatorInitialize(
     NVPW_CUDA_MetricsEvaluator_Initialize_Params *pParams);
 
 template <bool CheckSuccess>
-NVPA_Status metricsEvaluatorDestroy(NVPW_MetricsEvaluator_Destroy_Params *pParams);
+NVPA_Status
+metricsEvaluatorDestroy(NVPW_MetricsEvaluator_Destroy_Params *pParams);
 
 template <bool CheckSuccess>
 NVPA_Status metricsEvaluatorConvertMetricNameToMetricEvalRequest(
@@ -217,8 +218,8 @@ NVPA_Status rawMetricsConfigBeginPassGroup(
     NVPW_RawMetricsConfig_BeginPassGroup_Params *pParams);
 
 template <bool CheckSuccess>
-NVPA_Status rawMetricsConfigAddMetrics(
-    NVPW_RawMetricsConfig_AddMetrics_Params *pParams);
+NVPA_Status
+rawMetricsConfigAddMetrics(NVPW_RawMetricsConfig_AddMetrics_Params *pParams);
 
 template <bool CheckSuccess>
 NVPA_Status rawMetricsConfigEndPassGroup(
@@ -233,7 +234,8 @@ NVPA_Status rawMetricsConfigGetConfigImage(
     NVPW_RawMetricsConfig_GetConfigImage_Params *pParams);
 
 template <bool CheckSuccess>
-NVPA_Status rawMetricsConfigDestroy(NVPW_RawMetricsConfig_Destroy_Params *pParams);
+NVPA_Status
+rawMetricsConfigDestroy(NVPW_RawMetricsConfig_Destroy_Params *pParams);
 
 template <bool CheckSuccess>
 NVPA_Status cudaCounterDataBuilderCreate(
@@ -248,8 +250,8 @@ NVPA_Status counterDataBuilderGetCounterDataPrefix(
     NVPW_CounterDataBuilder_GetCounterDataPrefix_Params *pParams);
 
 template <bool CheckSuccess>
-NVPA_Status counterDataBuilderDestroy(
-    NVPW_CounterDataBuilder_Destroy_Params *pParams);
+NVPA_Status
+counterDataBuilderDestroy(NVPW_CounterDataBuilder_Destroy_Params *pParams);
 
 void setLibPath(const std::string &path);
 
@@ -260,8 +262,8 @@ namespace nvperfTarget {
 void setLibPath(const std::string &path);
 
 template <bool CheckSuccess>
-NVPA_Status counterDataGetNumRanges(
-    NVPW_CounterData_GetNumRanges_Params *pParams);
+NVPA_Status
+counterDataGetNumRanges(NVPW_CounterData_GetNumRanges_Params *pParams);
 
 template <bool CheckSuccess>
 NVPA_Status profilerCounterDataGetRangeDescriptions(

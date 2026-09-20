@@ -620,8 +620,7 @@ public:
   // allowing CUDA to request the async entry point for the default stream.
   explicit CoreXRuntimeBackendAdapter(bool preferAsyncMemset = false,
                                       bool cudaDriverOnly = false)
-      : preferAsyncMemset_(preferAsyncMemset),
-        cudaDriverOnly_(cudaDriverOnly) {
+      : preferAsyncMemset_(preferAsyncMemset), cudaDriverOnly_(cudaDriverOnly) {
     load();
   }
 
@@ -899,9 +898,9 @@ private:
   }
 
   void load() {
-    const char *env = std::getenv(
-        cudaDriverOnly_ ? "FLAGTREE_DEBUGGER_CUDA_DRIVER_LIBRARY"
-                        : "FLAGTREE_DEBUGGER_COREX_DRIVER_LIBRARY");
+    const char *env =
+        std::getenv(cudaDriverOnly_ ? "FLAGTREE_DEBUGGER_CUDA_DRIVER_LIBRARY"
+                                    : "FLAGTREE_DEBUGGER_COREX_DRIVER_LIBRARY");
     std::vector<std::string> candidates;
     if (env && *env) {
       candidates.emplace_back(env);

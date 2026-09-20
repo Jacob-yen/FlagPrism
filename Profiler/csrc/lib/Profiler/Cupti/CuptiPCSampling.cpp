@@ -385,11 +385,10 @@ void CuptiPCSampling::processPCSamplingData(ConfigureData *configureData,
             configureData->stallReasonIndexToMetricIndex
                 [stallReason->pcSamplingStallReasonIndex]);
         auto samples = stallReason->samples;
-        auto stalledSamples =
-            configureData->notIssuedStallReasonIndices.count(
-                stallReason->pcSamplingStallReasonIndex)
-                ? 0
-                : samples;
+        auto stalledSamples = configureData->notIssuedStallReasonIndices.count(
+                                  stallReason->pcSamplingStallReasonIndex)
+                                  ? 0
+                                  : samples;
         // FlagPrism: publish once per CUPTI stall bucket. TreeData and
         // TraceData are both consumers of dataSet, so recording inside the
         // loop would duplicate the NVIDIA vendor association.

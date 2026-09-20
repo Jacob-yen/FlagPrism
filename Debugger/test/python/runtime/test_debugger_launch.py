@@ -12,6 +12,7 @@ import triton
 
 from flagtree.debugger import api as debugger
 
+
 def _reset_debugger_state():
     debugger.deactivate()
     debugger.clear_exported_runs()
@@ -372,7 +373,8 @@ def test_timeline_config_is_exposed_to_compiler():
         debugger.configure(timeline=True)
         debugger.activate(level=1)
         assert debugger.get_config()["timeline"] is True
-        assert debugger.current_compile_config()["debug_timeline_enabled"] is True
+        assert debugger.current_compile_config(
+        )["debug_timeline_enabled"] is True
     finally:
         _reset_debugger_state()
 

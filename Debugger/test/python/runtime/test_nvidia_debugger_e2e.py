@@ -35,7 +35,7 @@ def test_nvidia_debugger_collects_a_real_kernel_launch():
     try:
         x = torch.arange(16, device="cuda", dtype=torch.float32)
         y = torch.zeros_like(x)
-        copy_kernel[(1,)](x, y, 16)
+        copy_kernel[(1, )](x, y, 16)
         torch.cuda.synchronize()
         runs = debugger.take_exported_runs()
     finally:
@@ -49,8 +49,9 @@ def test_nvidia_debugger_collects_a_real_kernel_launch():
     assert runs[0]["decoded"]["records"]
     # FlagPrism: CUDA timeline records use PTX %globaltimer when explicitly
     # requested through the backend-neutral debugger API.
-    assert any(record.get("record_kind") == "TIMELINE"
-               for record in runs[0]["decoded"]["records"])
+    assert any(
+        record.get("record_kind") == "TIMELINE"
+        for record in runs[0]["decoded"]["records"])
 
 
 @pytest.mark.module_a
@@ -73,7 +74,7 @@ def test_nvidia_debugger_level2_exports_supported_artifacts(tmp_path):
     try:
         x = torch.arange(16, device="cuda", dtype=torch.float32)
         y = torch.zeros_like(x)
-        copy_kernel[(1,)](x, y, 16)
+        copy_kernel[(1, )](x, y, 16)
         torch.cuda.synchronize()
         runs = debugger.take_exported_runs()
     finally:
@@ -82,9 +83,8 @@ def test_nvidia_debugger_level2_exports_supported_artifacts(tmp_path):
     assert torch.equal(x, y)
     assert runs
     artifacts = runs[0]["runtime_metadata"].get("full_dump_artifacts") or []
-    assert {artifact["kind"] for artifact in artifacts} >= {
-        "value", "memory_address"
-    }
+    assert {artifact["kind"]
+            for artifact in artifacts} >= {"value", "memory_address"}
     assert all(Path(artifact["path"]).is_file() for artifact in artifacts)
 
 

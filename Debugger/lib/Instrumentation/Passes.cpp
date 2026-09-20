@@ -3401,12 +3401,11 @@ Value createDeviceCycleRead(OpBuilder &builder, Location loc,
   // FlagPrism: NVIDIA's `%globaltimer` is a device-wide nanosecond clock and
   // is the CUDA counterpart of Ascend's SYS_CNT register. Keep the existing
   // Ascend instruction unchanged so this shared pass remains backend-neutral.
-  const bool isNvidia = timelineBackend == "cuda" ||
-                        timelineBackend == "nvidia";
+  const bool isNvidia =
+      timelineBackend == "cuda" || timelineBackend == "nvidia";
   state.addAttribute(
-      "asm_string",
-      builder.getStringAttr(isNvidia ? "mov.u64 $0, %globaltimer;"
-                                     : "MOV $0, SYS_CNT"));
+      "asm_string", builder.getStringAttr(isNvidia ? "mov.u64 $0, %globaltimer;"
+                                                   : "MOV $0, SYS_CNT"));
   state.addAttribute("constraints", builder.getStringAttr("=l"));
   state.addAttribute("pure", builder.getBoolAttr(false));
   state.addAttribute("packed_element", builder.getI32IntegerAttr(1));
@@ -3469,8 +3468,7 @@ void insertRecordOps(OpBuilder &builder, const InstrumentationTarget &target,
                      int32_t &nextRecordIndex,
                      llvm::SmallVectorImpl<RecordPlanEntry> &recordPlan,
                      llvm::SmallVectorImpl<FullDumpPlanEntry> &fullDumpPlan,
-                     uint64_t &nextPayloadOffset,
-                     StringRef timelineBackend) {
+                     uint64_t &nextPayloadOffset, StringRef timelineBackend) {
   if (!target.op || target.op->hasTrait<OpTrait::IsTerminator>())
     return;
 
@@ -3951,8 +3949,7 @@ struct InsertInstrumentationPass
     if (!metadataOnlyCompilePath) {
       for (const InstrumentationTarget &target : targets)
         insertRecordOps(opBuilder, target, recordsPerInstance, recordPlan,
-                        fullDumpPlan, payloadBytesPerInstance,
-                        timelineBackend);
+                        fullDumpPlan, payloadBytesPerInstance, timelineBackend);
       // Local entry alignment is insufficient: every program's payload base
       // must preserve it too, including a final four-byte scalar entry.
       uint64_t payloadAlignment = 1;

@@ -143,8 +143,8 @@ def test_module_a_A2_debug_launch_hidden_arg_follows_env(
     out = triton.compile(src, target=_target())
     # FlagPrism: CUDA uses the same hidden control-pointer contract after the
     # NVIDIA TransferEngine adapter is enabled.
-    assert out.metadata.debug_launch_hidden_arg is (_target().backend in
-                                                    {"npu", "cuda"})
+    assert out.metadata.debug_launch_hidden_arg is (_target().backend
+                                                    in {"npu", "cuda"})
 
 
 @pytest.mark.module_a

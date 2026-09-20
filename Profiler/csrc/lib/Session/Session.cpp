@@ -304,9 +304,8 @@ makeVendorMetrics(const VendorMetricAssociation &association,
         association.source.rfind("nvidia_", 0) == 0;
     // FlagPrism: keep vendor namespaces distinct when adapters share the
     // common artifact overlay path.
-    const auto prefix = isMthreadsMetric
-                            ? ""
-                            : (isNvidiaMetric ? "nvidia." : "cann.");
+    const auto prefix =
+        isMthreadsMetric ? "" : (isNvidiaMetric ? "nvidia." : "cann.");
     vendorMetrics[prefix + name] = value;
   }
   return vendorMetrics;

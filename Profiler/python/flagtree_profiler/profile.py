@@ -1186,7 +1186,7 @@ def start(
         name (str, optional): The name (with path) of the profiling session.
                               If not provided, the default name is "~/profiler.hatchet".
         backend (str, optional): The backend to use for profiling.
-        Available options are [None, "cupti", "nvidia", "cupti_pcsampling", "roctracer", "cann", "mthreads", "tianshu"].
+        Available options are [None, "cupti", "nvidia", "cuda", "cupti_pcsampling", "roctracer", "cann", "mthreads", "tianshu"].
                                  Defaults to None, which automatically selects the backend matching the current active runtime.
         context (str, optional): The context to use for profiling.
                                  Available options are ["shadow", "python"].

@@ -216,9 +216,8 @@ def run_ttir_debug_passes_if_needed(mod, metadata: dict) -> None:
                           and _kernel_internal_timeline_supported())
     timeline_requested = auto_collect or bool(
         debug_config.get("debug_timeline_enabled", False))
-    fd.set_debug_timeline_enabled(mod,
-                                  bool(timeline_requested and
-                                       timeline_supported))
+    fd.set_debug_timeline_enabled(
+        mod, bool(timeline_requested and timeline_supported))
     fd.set_debug_timeline_only(mod, bool(auto_collect and timeline_supported))
     # FlagPrism: pass the target backend into the shared instrumentation pass
     # so CUDA uses `%globaltimer` instead of the Ascend SYS_CNT instruction.
